@@ -53,12 +53,14 @@ jobs:
                   mkdir -p deploy/gesture-recognition-demo
                   mkdir -p deploy/sleep-recognition-demo
                   mkdir -p deploy/perlin
+                  mkdir -p deploy/camera-demo
 
             - name: Copy build outputs
               run: |
                   cp -r gesture-recognition-demo/dist/* deploy/gesture-recognition-demo/
                   cp -r sleep-recognition-demo/dist/* deploy/sleep-recognition-demo/
                   cp -r perlin/* deploy/perlin/
+                  cp -r camera-demo/* deploy/camera-demo/
 
             #
             # Deploy to gh-pages branch

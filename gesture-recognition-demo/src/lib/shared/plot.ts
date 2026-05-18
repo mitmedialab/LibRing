@@ -48,6 +48,7 @@ export class AccelChart {
             },
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
                 animation: false,
                 scales: {
                     x: {
@@ -68,8 +69,9 @@ export class AccelChart {
         this.chart.data.datasets[0].data.push(data.x);
         this.chart.data.datasets[1].data.push(data.y);
         this.chart.data.datasets[2].data.push(data.z);
-        // Limit to last 100 points
-        if (this.chartData.length > 100) {
+        // Set limit to a higher density for the expanded view
+        const limit = 500;
+        if (this.chartData.length > limit) {
             this.chartData.shift();
             this.chart.data.labels?.shift();
             this.chart.data.datasets.forEach((ds) => ds.data.shift());

@@ -1,0 +1,69 @@
+html,
+body {
+    padding: 0;
+    margin: 0;
+    height: 100vh;
+    width: 100vw;
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    background-color: #222;
+    overflow: hidden;
+}
+
+#camera-container {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #000;
+    overflow: hidden;
+    position: relative;
+    border-bottom: 2px solid #444;
+}
+
+#videoElement {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+#photo-container {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #111;
+    position: relative;
+    overflow: hidden;
+}
+
+#photoElement {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: none; /* hidden until photo is taken */
+}
+
+.floating-btn {
+    position: absolute;
+    bottom: 30px;
+    padding: 15px 30px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 30px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+    transition:
+        background-color 0.3s,
+        transform 0.2s;
+    z-index: 10;
+}
+
+.floating-btn:hover {
+    background-color: #0056b3;
+    transform: scale(1.05);
+}

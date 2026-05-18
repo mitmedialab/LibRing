@@ -174,62 +174,46 @@ if (classifyPage) {
     // Utility to display classification result
     function displayClassificationResult(result: any) {
         console.log(result);
+
+        const stateDisplay = document.getElementById('sleep-state-display');
+        const stateLabel = document.getElementById('sleep-state-label');
+
+        if (!stateDisplay || !stateLabel) return;
+
+        const label = typeof result === 'string' ? result : result && result.length ? result[0].label : 'idle';
+
+        let displayText = 'IDLE';
+        let backgroundColor = '#222222'; // Dark gray for idle
+
+        switch (label) {
+            case 'circle-cw':
+                displayText = 'VOLUME UP 🔊🔊🔊';
+                backgroundColor = '#2d5f1e'; // Green
+                break;
+            case 'circle-ccw':
+                displayText = 'VOLUME DOWN 🔈';
+                backgroundColor = '#5f1e1e'; // Red
+                break;
+            case 'idle':
+            default:
+                displayText = 'IDLE';
+                backgroundColor = '#222222';
+                break;
+        }
+
+        stateLabel.textContent = displayText;
+        stateDisplay.style.backgroundColor = backgroundColor;
+
+        // Still update the hidden pre element if it's there
         let pre = document.getElementById('classify-ml-classify-result') as HTMLPreElement;
         if (!pre) {
             pre = document.createElement('pre');
             pre.id = 'classify-ml-classify-result';
+            pre.style.display = 'none';
             document.body.appendChild(pre);
         }
 
-        // let maxConf = 0;
-        // let maxLabel = '';
-        // for (let vals of result) {
-        //     if (vals.confidence > maxConf) {
-        //         maxConf = vals.confidence;
-        //         maxLabel = vals.label;
-        //     }
-        // }
-
-        // Show active gesture status
-        // const activeGesture = gestureHandler.getActiveGesture();
-        // const activeDuration = gestureHandler.getActiveGestureDuration();
-
-        // Modern Bootstrap progress bar display for results (no sorting)
-        // if (
-        //     Array.isArray(result) &&
-        //     result.length &&
-        //     result[0].label
-        //     //  && result[0].confidence !== undefined
-        // ) {
-        // Do not sort, use original order
-        let html = '';
-
-        const label = result;
-
-        // Show active gesture indicator if present
-        // if (activeGesture) {
-        html += `<div class="alert alert-success py-1 mb-2">Current Gesture: <strong>${label == 'circle-cw' ? ' 🔊Clockwise Circle' : label == 'circle-ccw' ? ' 🔈Counterclockwise Circle' : 'Idle'}</strong></div>`;
-        // }
-
-        // result.forEach((item, idx) => {
-        //     const isMax = item.label === maxLabel;
-        //     const percent = (item.confidence * 100).toFixed(1);
-        //     html += `
-        //             <div class="d-flex align-items-center ${false ? 'bg-primary bg-opacity-10 rounded-2 border border-primary' : ''} mb-1 p-1">
-        //                 <span class="fw-semibold ${false ? 'text-primary' : ''}">${item.label}</span>
-        //                 <div class="progress flex-grow-1 bg-dark mx-2" style="height: 1.1em; min-width: 80px;">
-        //                     <div class="progress-bar ${isMax ? 'bg-primary' : 'bg-secondary'}" role="progressbar" style="width: ${percent}%" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"></div>
-        //                 </div>
-        //                 <span class="small ${false ? 'fw-bold text-primary' : ''}" style="min-width: 48px; text-align: right;">${percent}%</span>
-        //             </div>
-        //     `;
-        // });
-        pre.innerHTML = html;
-        // }
-        //  else {
-        //     pre.textContent =
-        //         typeof result === 'string' ? result : `Classification Result:\n${JSON.stringify(result, null, 2)}`;
-        // }
+        pre.innerHTML = `<div class="alert alert-success py-1 mb-2">Current Gesture: <strong>${displayText}</strong></div>`;
     }
 
     recorder.setClassifyHandler((d) => handleClassificationResult(d));

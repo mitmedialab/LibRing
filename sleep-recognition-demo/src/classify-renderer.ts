@@ -76,13 +76,16 @@ if (body && body.id === 'page-classify') {
 
     function setButtonToConnect() {
         if (!connectToggleBtn) return;
-        connectToggleBtn.style.display = '';
-        connectToggleBtn.disabled = false;
         connectToggleBtn.innerHTML = 'Connect';
-        connectToggleBtn.className = 'btn btn-primary btn-lg';
-        // show container and reset sleep display sizing
-        const container = document.getElementById('connect-container');
-        if (container) container.style.display = '';
+        connectToggleBtn.className = 'btn btn-primary shadow';
+        connectToggleBtn.disabled = false;
+    }
+
+    function setButtonToDisconnect() {
+        if (!connectToggleBtn) return;
+        connectToggleBtn.innerHTML = 'Disconnect';
+        connectToggleBtn.className = 'btn btn-danger shadow';
+        connectToggleBtn.disabled = false;
     }
 
     function setButtonToConnecting() {
@@ -90,15 +93,12 @@ if (body && body.id === 'page-classify') {
         isConnecting = true;
         connectToggleBtn.disabled = true;
         connectToggleBtn.innerHTML = `<span class="spinner-inline" aria-hidden="true"></span> Connecting...`;
-        connectToggleBtn.className = 'btn btn-primary btn-lg';
+        connectToggleBtn.className = 'btn btn-primary shadow';
     }
 
     function hideButton() {
-        if (!connectToggleBtn) return;
-        connectToggleBtn.style.display = 'none';
-        // hide the entire connect container so the sleep display can fill the screen
-        const container = document.getElementById('connect-container');
-        if (container) container.style.display = 'none';
+        // We no longer hide the button, we turn it into a disconnect button
+        setButtonToDisconnect();
     }
 
     setButtonToConnect();

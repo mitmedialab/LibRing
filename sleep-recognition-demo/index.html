@@ -14,24 +14,40 @@
     <body
         class="bg-dark text-light"
         id="page-classify"
-        style="height: 100vh; width: 100vw; margin: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden;"
+        style="
+            height: 100vh;
+            width: 100vw;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        "
     >
         <!-- Sleep State Display - Full Screen -->
         <div
             id="sleep-state-display"
             class="flex-grow-1 d-flex flex-column justify-content-center align-items-center p-3 text-center"
-            style="background-color: #2d5f1e; transition: background-color 0.3s ease-in-out; gap: 2vh; width: 100%; flex: 1;"
+            style="
+                background-color: #2d5f1e;
+                transition: background-color 0.3s ease-in-out;
+                gap: 2vh;
+                width: 100%;
+                flex: 1;
+            "
         >
-            <div id="sleep-state-label">
-                ACTIVE
-            </div>
+            <div id="sleep-state-label">ACTIVE</div>
             <div id="sleep-state-info"></div>
         </div>
 
-        <!-- Connection Button - Bottom -->
-        <div id="connect-container" class="d-flex justify-content-center align-items-center p-4" style="gap: 1rem">
+        <!-- Connection Button - Floating Bottom Left -->
+        <div
+            id="connect-container"
+            class="floating-wrapper"
+            style="position: absolute; left: 20px; bottom: 20px; z-index: 1000"
+        >
             <button
-                class="btn btn-primary btn-lg"
+                class="btn btn-primary shadow"
                 id="classify-connect-toggle"
                 style="font-size: 1.25rem; padding: 0.9rem 1.6rem; min-width: 160px"
             >

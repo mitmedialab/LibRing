@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+    <head>
+        <title>Ring Camera App</title>
+        <!-- BLE input (replaces legacy serial input) -->
+        <script src="ble.js"></script>
+
+        <link rel="stylesheet" type="text/css" href="style.css" />
+    </head>
+    <body>
+        <div id="camera-container">
+            <video id="videoElement" autoplay playsinline></video>
+        </div>
+        <div id="photo-container">
+            <img id="photoElement" src="" alt="Captured Photo" />
+            <canvas id="canvasElement" style="display: none"></canvas>
+            <button id="connectBtn" class="floating-btn">Connect BLE Device</button>
+        </div>
+
+        <script src="index.js"></script>
+    </body>
+</html>

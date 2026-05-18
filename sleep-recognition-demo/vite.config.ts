@@ -17,5 +17,5 @@ export default defineConfig({
             '@': resolve(__dirname, './src'),
         },
     },
-    base: 'ATC_SR08_Ring/sleep-recognition-demo',
+    base: 'LibRing/sleep-recognition-demo',
 });
