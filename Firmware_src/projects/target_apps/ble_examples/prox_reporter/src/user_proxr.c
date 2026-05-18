@@ -98,7 +98,6 @@ typedef enum {
     
     FLUID_MODE, 
     BT_INIT, 
-    
     BT_NOTIF, 
     NUM_STATES
 } user_state_t;
@@ -531,8 +530,10 @@ static void app_button_press_cb(void)
         start_main_timer(); 
     }
 
-    user_state = (user_state + 1) % NUM_STATES;
-    user_run = true; 
+    if (user_state != FLUID_MODE) {
+        user_state = (user_state + 1) % NUM_STATES;
+        user_run = true; 
+    }
 }
 
 void app_button_enable(void)
