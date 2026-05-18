@@ -1,4 +1,4 @@
-import { connectToBLE, disconnectFromBLE, setNtfHandler } from './lib/shared/accelerometer/ble';
+import { connectToBLE, disconnectFromBLE, setNtfHandler, setBtnHandler } from './lib/shared/accelerometer/ble';
 import { AccelChart } from './lib/shared/plot';
 import ClassificationMLRecorder, { ClassifyHandlerData } from './lib/classify/ClassificationMLRecorder';
 // import { GestureHandler } from './lib/classify/GestureHandler';
@@ -74,6 +74,7 @@ if (classifyPage) {
     const connectToggleBtn = document.getElementById('classify-connect-toggle') as HTMLButtonElement;
     const recordingToggleBtn = document.getElementById('classify-recording-toggle') as HTMLButtonElement;
     const loadModelBtn = document.getElementById('classify-load-model') as HTMLButtonElement;
+    const btnIndicator = document.getElementById('btn-indicator') as HTMLDivElement;
 
     let isConnected = false;
     let isRecording = true;
@@ -98,6 +99,8 @@ if (classifyPage) {
                 isConnected = false;
                 // isRecording = false;
                 setNtfHandler(() => {});
+                setBtnHandler(() => {});
+                if (btnIndicator) btnIndicator.style.backgroundColor = 'red';
                 updateButtonStates();
             });
         } else {
@@ -108,6 +111,12 @@ if (classifyPage) {
                     setNtfHandler((a) => {
                         chart.plot(a);
                         handlers.ntfHandler(a);
+                    });
+
+                    setBtnHandler((pressed) => {
+                        if (btnIndicator) {
+                            btnIndicator.style.backgroundColor = pressed ? '#008000' : 'red';
+                        }
                     });
                     updateButtonStates();
                 })

@@ -6,8 +6,10 @@ let accelCharacteristic: BluetoothRemoteGATTCharacteristic;
 let btnCharacteristic: BluetoothRemoteGATTCharacteristic;
 
 export type AccelNtfHandler = (accelData: { x: number; y: number; z: number; timestamp: string }) => void;
+export type BtnNtfHandler = (pressed: number) => void;
 
 let accelNtfHandler: AccelNtfHandler = () => {};
+let btnNtfHandler: BtnNtfHandler = () => {};
 
 const serviceUuid = '00112233-4455-6677-8899-aabbccddeeff';
 const characteristicUuid = '2d86686a-53dc-25b3-0c4a-f0e10c8dee20';
@@ -63,7 +65,8 @@ function handleAccelNotification(event: any) {
 
 function handleButtonNotification(event: any) {
     const val = event.target.value;
-    console.log(val.getInt8(0));
+    const pressed = val.getInt8(0);
+    if (btnNtfHandler) btnNtfHandler(pressed);
 }
 
 export async function connectToBLE() {
@@ -148,4 +151,8 @@ function onDisconnected() {
 
 export function setNtfHandler(handler: AccelNtfHandler) {
     accelNtfHandler = handler;
+}
+
+export function setBtnHandler(handler: BtnNtfHandler) {
+    btnNtfHandler = handler;
 }
