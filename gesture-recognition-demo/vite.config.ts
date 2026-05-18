@@ -17,5 +17,5 @@ export default defineConfig({
             '@': resolve(__dirname, './src'),
         },
     },
-    base: 'LibRing/gesture-recognition-demo',
+    base: '/LibRing/gesture-recognition-demo',
 });

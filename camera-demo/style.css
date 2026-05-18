@@ -61,7 +61,6 @@ body {
     font-weight: 600;
     letter-spacing: 0.05em;
     cursor: pointer;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -72,7 +71,6 @@ body {
 
 .floating-btn:hover {
     background-color: #0a53be;
-    transform: scale(1.05);
 }
 
 @media (max-width: 600px) {

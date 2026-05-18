@@ -114,6 +114,5 @@ body.graph-open #sleep-state-display {
 
 #classify-connect-toggle:hover,
 #toggle-graph-btn:hover {
-    transform: scale(1.05);
     transition: transform 0.2s ease-in-out;
 }
