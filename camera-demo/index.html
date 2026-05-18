@@ -1,6 +1,7 @@
 <!doctype html>
 <html>
     <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
         <title>Ring Camera App</title>
         <!-- BLE input (replaces legacy serial input) -->
         <script src="ble.js"></script>
@@ -14,7 +15,10 @@
         <div id="photo-container">
             <img id="photoElement" src="" alt="Captured Photo" />
             <canvas id="canvasElement" style="display: none"></canvas>
-            <button id="connectBtn" class="floating-btn">Connect BLE Device</button>
+            <!-- Connection Button - Floating Bottom Left -->
+            <div class="floating-wrapper" style="left: 20px; bottom: 20px">
+                <button id="connectBtn" class="floating-btn shadow">Connect BLE Device</button>
+            </div>
         </div>
 
         <script src="index.js"></script>
