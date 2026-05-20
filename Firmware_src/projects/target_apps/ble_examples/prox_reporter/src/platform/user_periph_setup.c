@@ -37,8 +37,9 @@ void GPIO_reservations(void)
 {
 /*
     i.e. to reserve P0_1 as Generic Purpose I/O:
-    RESERVE_GPIO(DESCRIPTIVE_NAME, GPIO_PORT_0, GPIO_PIN_1, PID_GPIO);
 */
+    RESERVE_GPIO(BATTERY_ADC, GPIO_PORT_0, GPIO_PIN_1, PID_ADC);
+    
     // Push Button
     RESERVE_GPIO(SPI_DI, GPIO_LEDC_PORT, GPIO_LEDC_PIN, PID_GPIO);
     RESERVE_GPIO(PUSH_BUTTON, GPIO_BUTTON_PORT, GPIO_BUTTON_PIN, PID_GPIO);
@@ -78,6 +79,9 @@ void set_pad_functions(void)
 {
     GPIO_ConfigurePin(GPIO_LEDC_PORT, GPIO_LEDC_PIN, OUTPUT, PID_GPIO, false);
     GPIO_ConfigurePin(GPIO_BUTTON_PORT, GPIO_BUTTON_PIN, INPUT_PULLDOWN, PID_GPIO, false);
+
+    // Configure P0_1 directly as Analog Input so ADC reads accurately
+    GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_1, INPUT, PID_ADC, false);
 
 #if (BLE_PROX_REPORTER)
     // Alert LED

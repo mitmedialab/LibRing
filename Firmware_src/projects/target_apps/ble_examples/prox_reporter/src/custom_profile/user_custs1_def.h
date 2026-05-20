@@ -75,6 +75,12 @@
 
 #define DEF_SVC1_BTN_USER_DESC       "Button Pressed"
 
+#define DEF_SVC1_BATT_UUID_128      {0x8a, 0x67, 0x3e, 0x35, 0xc0, 0x08, 0x48, 0x70, 0x8a, 0x0d, 0x06, 0x80, 0xc3, 0x75, 0x51, 0xe1}
+
+#define DEF_SVC1_BATT_CHAR_LEN       4
+
+#define DEF_SVC1_BATT_USER_DESC     "Battery level"
+
 
 /// Custom1 Service Data Base Characteristic enum
 enum
@@ -95,6 +101,11 @@ enum
     SVC1_IDX_BTN_VAL, 
     SVC1_IDX_BTN_NTF_CFG, 
     SVC1_IDX_BTN_USER_DESC,
+
+    SVC1_IDX_BATT_CHAR, 
+    SVC1_IDX_BATT_VAL, 
+    SVC1_IDX_BATT_NTF_CFG, 
+    SVC1_IDX_BATT_USER_DESC,
 
     CUSTS1_IDX_NB
 };

@@ -294,4 +294,88 @@ void notify_btn_data(uint8_t btn_pressed) {
     ke_msg_send(req); 
 }
 
+
+
+void update_batt_data(uint32_t batt) {
+
+    
+    // CRITICAL: Check if service is initialized first
+    struct custs1_env_tag *custs1_env = PRF_ENV_GET(CUSTS1, custs1);
+    if (custs1_env == NULL) {
+        return; 
+    }
+    
+    // CRITICAL: Check if task is in correct state (not busy)
+    // If busy, skip to avoid message queue overflow
+    ke_state_t state = ke_state_get(TASK_ID_CUSTS1);
+    if (state == CUSTS1_BUSY) {
+        return; 
+    }
+
+    uint8_t data_buf[4] = {(batt >> 24) & 0xFF, (batt >> 16) & 0xFF, (batt >> 8) & 0xFF, (batt >> 0) & 0xFF}; 
+    
+    // Use message-based approach
+    struct custs1_val_set_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_SET_REQ,
+                                                       prf_get_task_from_id(TASK_ID_CUSTS1),
+                                                       TASK_APP,
+                                                       custs1_val_set_req,
+                                                       DEF_SVC1_BATT_CHAR_LEN);
+    
+    if (req == NULL) {
+        return;
+    }
+    
+    // Set the message parameters
+    req->conidx = 0;
+    req->handle = SVC1_IDX_BATT_VAL;
+    req->length = DEF_SVC1_BATT_CHAR_LEN;
+    
+    // Copy data to message
+    memcpy(req->value, data_buf, DEF_SVC1_BATT_CHAR_LEN);
+    
+    // Send the message
+    ke_msg_send(req);
+}
+
+void notify_batt_data(uint32_t batt) {
+
+
+    struct custs1_env_tag *custs1_env = PRF_ENV_GET(CUSTS1, custs1);
+    if (custs1_env == NULL) {
+        return; // Service not initialized
+    }
+    
+    // CRITICAL: Check if task is in correct state (not busy)
+    // If busy, skip to avoid message queue overflow
+    ke_state_t state = ke_state_get(TASK_ID_CUSTS1);
+    if (state == CUSTS1_BUSY) {
+        return; // Task is busy processing another message, skip this update
+    }
+
+
+    // Prepare data buffer (4 bytes)
+    uint8_t data_buf[4] = {(batt >> 24) & 0xFF, (batt >> 16) & 0xFF, (batt >> 8) & 0xFF, (batt >> 0) & 0xFF}; 
+
+    // Use message-based approach
+    struct custs1_val_ntf_ind_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_NTF_REQ,
+                                                            prf_get_task_from_id(TASK_ID_CUSTS1),
+                                                            TASK_APP,
+                                                            custs1_val_ntf_ind_req,
+                                                            DEF_SVC1_BATT_CHAR_LEN);
+
+    if (req == NULL) {
+        return; // Allocation failed - heap might be full
+    }
+
+    req->conidx = 0; // Connection index (0 for first connection)
+    req->handle = SVC1_IDX_BATT_VAL;
+    req->length = DEF_SVC1_BATT_CHAR_LEN;
+    req->notification = true;
+
+    memcpy(req->value, data_buf, DEF_SVC1_BATT_CHAR_LEN);
+
+    ke_msg_send(req);
+}
+
+
 #endif //BLE_CUSTOM1_SERVER

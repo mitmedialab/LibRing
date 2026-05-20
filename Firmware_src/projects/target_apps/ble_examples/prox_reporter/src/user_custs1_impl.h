@@ -69,6 +69,9 @@ void update_btn_data(uint8_t btn_pressed);
 
 void notify_btn_data(uint8_t btn_pressed); 
 
+void update_batt_data(uint32_t batt); 
+void notify_batt_data(uint32_t batt); 
+
 #endif
 
 #endif // _USER_CUSTS1_IMPL_H_

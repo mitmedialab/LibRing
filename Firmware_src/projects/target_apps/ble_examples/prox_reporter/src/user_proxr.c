@@ -35,6 +35,10 @@
 
 #include "fluid/fluid_5x25.h"
 
+#include "battery.h"
+
+#include "adc.h"
+
 
 #if defined(__IS_SDK6_COMPILER_GCC__) && !defined(__clang__)
 #pragma message("Please note that SDK6 GCC support will be deprecated in the next SDK6 release")
@@ -97,6 +101,7 @@ typedef enum {
     // DISP_INFO, 
     
     FLUID_MODE, 
+    BATT_MODE, 
     BT_INIT, 
     BT_NOTIF, 
     NUM_STATES
@@ -335,46 +340,39 @@ static void main_timer_cb(void) {
         #endif
 
         user_run = true;
-    }
-    //  else if (user_state == ACCEL_CONFIG) {
-    //     LED_GPIO_mode(1);
+    } else if (user_state == BATT_MODE) {
+        LED_GPIO_mode(1); 
         
-    //     // if (val) {
-    //     //     led_value = 100; 
-    //     // } else {
-    //     //     led_value = 9; 
-    //     // }
+        adc_config_t cfg =
+        {
+            .mode = ADC_INPUT_MODE_SINGLE_ENDED,
+            .sign = true,
+            .attn = true
+        };
+
+        adc_init(&cfg);
+        arch_asm_delay_us(20);
+        adc_set_se_input(ADC_INPUT_SE_P0_1); // Read the dedicated ADC pin!
+        uint32_t sample1 = adc_get_sample();
+        arch_asm_delay_us(2);
         
-    //     user_run = false; 
-    // } else if (user_state == ACCEL_SENS) {
-
-
-    //     led_value = sens; 
-    //     user_run = false; 
-    // } else if (user_state == WHOAMI) {
-    //     // user_run = false;
-    //     LED_GPIO_mode(1); 
-    //     uint8_t whoami_out = accel_cmd_whoami(); 
+        cfg.sign = false;
+        adc_init(&cfg);
+        adc_set_se_input(ADC_INPUT_SE_P0_1);
+        uint32_t sample2 = adc_get_sample();
         
-    //     led_value = whoami_out; 
+        uint32_t raw_adc = (sample1 + sample2);
+        adc_disable();
 
-    //     user_run = false; 
-    // }
-    //  else if (user_state == DISP_INFO) {
-    //     // led_value = 1; 
-    //     LED_GPIO_mode(1);
+        // led_value = (uint8_t)(raw_adc & 0xFF); 
+        
 
-    //     accel_data_t data; 
-
-    //     bool out = accel_cmd_readaccel(&data); 
-
-    //     accel_convert_to_mg(&data, sens); 
-
-    //     led_value = abs(data.y); 
-    //     // led_value = out; 
-    //     // user_run = false; 
-    // }
-     else if (user_state == BT_INIT) {
+        #if (BLE_CUSTOM1_SERVER)
+            update_batt_data(raw_adc); // Send real accelerometer data (raw)
+            notify_batt_data(raw_adc); // notify corresponding devices
+        #endif
+        user_run = true; 
+    } else if (user_state == BT_INIT) {
         
         // // Skip accelerometer reads - just send test data
         // accel_data_t data; 
@@ -530,7 +528,7 @@ static void app_button_press_cb(void)
         start_main_timer(); 
     }
 
-    if (user_state != FLUID_MODE) {
+    if (user_state != BATT_MODE) {
         user_state = (user_state + 1) % NUM_STATES;
         user_run = true; 
     }
