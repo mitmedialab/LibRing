@@ -92,20 +92,6 @@ accel_sensitivity_t sens;
 static timer_hnd main_timer_hnd = EASY_TIMER_INVALID_TIMER; 
 static timer_hnd button_hold_timer_hnd = EASY_TIMER_INVALID_TIMER;
 
-typedef enum {
-    DEFAULT,
-    ACCEL_INIT,
-    // ACCEL_CONFIG, 
-    // ACCEL_SENS, 
-    // WHOAMI, 
-    // DISP_INFO, 
-    
-    FLUID_MODE, 
-    BATT_MODE, 
-    BT_INIT, 
-    BT_NOTIF, 
-    NUM_STATES
-} user_state_t;
 
 uint8_t user_state = 0;
 bool user_run = false;  
@@ -226,7 +212,13 @@ void refreshMenu()
             // Keep the 6th byte unused/zero.
             LED_Buffer[5] = 0x00;
         } else {
-            LED_Buff_setInt(led_value, LED_Buffer, 5);
+            LED_Buffer[0] = 0b00000000; // 0b01111000; 
+            LED_Buffer[1] = 0b00000000; // 0b01110000; 
+            LED_Buffer[2] = 0; // 0b01111000; 
+            LED_Buffer[3] = 0; // 0b01110000; 
+            LED_Buffer[4] = 0; // 0b01111000; 
+            LED_Buffer[5] = 0x00; 
+            // LED_Buff_setInt(led_value, LED_Buffer, 5);
         }
 }
 
@@ -342,6 +334,7 @@ static void main_timer_cb(void) {
         user_run = true;
     } else if (user_state == BATT_MODE) {
         LED_GPIO_mode(1); 
+        led_value = 88888;
         
         adc_config_t cfg =
         {

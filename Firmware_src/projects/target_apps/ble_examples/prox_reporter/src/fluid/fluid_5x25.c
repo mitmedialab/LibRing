@@ -68,13 +68,13 @@ void fluid_5x25_to_segments(const fluid_5x25_t *f, uint8_t LED_segments[5])
 
     // Existing 7-seg encoding in this firmware:
     // bit0=A, bit1=B, bit2=C, bit3=D, bit4=E, bit5=F, bit6=G
-    const uint8_t SEG_A = (1u << 0);
-    const uint8_t SEG_B = (1u << 1);
-    const uint8_t SEG_C = (1u << 2);
-    const uint8_t SEG_D = (1u << 3);
-    const uint8_t SEG_E = (1u << 4);
-    const uint8_t SEG_F = (1u << 5);
-    const uint8_t SEG_G = (1u << 6);
+    const uint8_t SEG_A = (1u << 0); // top
+    const uint8_t SEG_B = (1u << 1); // top left
+    const uint8_t SEG_C = (1u << 2); // top right
+    const uint8_t SEG_D = (1u << 3); // middle
+    const uint8_t SEG_E = (1u << 4); // bottom left
+    const uint8_t SEG_F = (1u << 5); // bottom right
+    const uint8_t SEG_G = (1u << 6); // bottom
 
     const uint8_t FLUID_THRESHOLD = 4; 
 

@@ -58,6 +58,9 @@
  ****************************************************************************************
  */
 extern uint32_t led_value;
+extern uint8_t user_state; 
+extern bool has_timer_started;
+extern bool user_run; 
 
 /*
  * FUNCTION DEFINITIONS
@@ -75,10 +78,19 @@ void user_custs1_wr_ind_handler(ke_msg_id_t const msgid,
 		if(param->value[0] != 0)
 		{
 			// Turn on the LED
-			LED_GPIO_mode(1);
-			led_value = 123;
+			// LED_GPIO_mode(1);
+			// led_value = 123;
+
 		} else {
-			LED_GPIO_mode(0);
+			// LED_GPIO_mode(0);
+
+            if (user_state == DEFAULT && !has_timer_started) {
+                has_timer_started = true; 
+                start_main_timer(); 
+            }
+            
+            user_state = BATT_MODE; 
+            user_run = true;
 		}
 	}
 }

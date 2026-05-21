@@ -222,6 +222,23 @@ void user_catch_rest_hndl(ke_msg_id_t const msgid,
 
 void LED_GPIO_mode(uint8_t mode); 
 
+void start_main_timer(void);
+
+typedef enum {
+    DEFAULT,
+    ACCEL_INIT,
+    // ACCEL_CONFIG, 
+    // ACCEL_SENS, 
+    // WHOAMI, 
+    // DISP_INFO, 
+    
+    FLUID_MODE, 
+    BATT_MODE, 
+    BT_INIT, 
+    BT_NOTIF, 
+    NUM_STATES
+} user_state_t;
+
 /// @} APP
 
 #endif // _USER_PROXR_H_
