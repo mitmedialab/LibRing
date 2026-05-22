@@ -26,23 +26,23 @@ jobs:
             #
             # Build app1
             #
-            - name: Install dependencies (gesture-recognition-demo)
-              working-directory: gesture-recognition-demo
+            - name: Install dependencies (gesture-recognition
+              working-directory: apps/gesture-recognition
               run: npm install
 
-            - name: Build gesture-recognition-demo
-              working-directory: gesture-recognition-demo
+            - name: Build gesture-recognition
+              working-directory: apps/gesture-recognition
               run: npm run build
 
             #
             # Build app2
             #
-            - name: Install dependencies (sleep-recognition-demo)
-              working-directory: sleep-recognition-demo
+            - name: Install dependencies (sleep-recognition)
+              working-directory: apps/sleep-recognition
               run: npm install
 
-            - name: Build sleep-recognition-demo
-              working-directory: sleep-recognition-demo
+            - name: Build sleep-recognition
+              working-directory: apps/sleep-recognition
               run: npm run build
 
             #
@@ -51,18 +51,18 @@ jobs:
             - name: Create deploy structure
               run: |
                   rm -rf deploy
-                  mkdir -p deploy/gesture-recognition-demo
-                  mkdir -p deploy/sleep-recognition-demo
+                  mkdir -p deploy/gesture-recognition
+                  mkdir -p deploy/sleep-recognition
                   mkdir -p deploy/perlin
-                  mkdir -p deploy/camera-demo
+                  mkdir -p deploy/camera
 
             - name: Copy build outputs
               run: |
-                  cp -r homepage/* deploy/
-                  cp -r gesture-recognition-demo/dist/* deploy/gesture-recognition-demo/
-                  cp -r sleep-recognition-demo/dist/* deploy/sleep-recognition-demo/
-                  cp -r perlin/* deploy/perlin/
-                  cp -r camera-demo/* deploy/camera-demo/
+                  cp -r apps/homepage/* deploy/
+                  cp -r apps/gesture-recognition/dist/* deploy/gesture-recognition/
+                  cp -r apps/sleep-recognition/dist/* deploy/sleep-recognition/
+                  cp -r apps/perlin/* deploy/perlin/
+                  cp -r apps/camera/* deploy/camera/
 
             #
             # Deploy to gh-pages branch
