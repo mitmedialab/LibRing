@@ -212,8 +212,8 @@ void refreshMenu()
             // Keep the 6th byte unused/zero.
             LED_Buffer[5] = 0x00;
         } else {
-            LED_Buffer[0] = 0b00000000; // 0b01111000; 
-            LED_Buffer[1] = 0b00000000; // 0b01110000; 
+            LED_Buffer[0] = 0; // 0b0100000; // 0b01111000; 
+            LED_Buffer[1] = 0; // 0b0100000; // 0b01110000; 
             LED_Buffer[2] = 0; // 0b01111000; 
             LED_Buffer[3] = 0; // 0b01110000; 
             LED_Buffer[4] = 0; // 0b01111000; 
@@ -336,35 +336,7 @@ static void main_timer_cb(void) {
         LED_GPIO_mode(1); 
         led_value = 88888;
         
-        adc_config_t cfg =
-        {
-            .mode = ADC_INPUT_MODE_SINGLE_ENDED,
-            .sign = true,
-            .attn = true
-        };
-
-        adc_init(&cfg);
-        arch_asm_delay_us(20);
-        adc_set_se_input(ADC_INPUT_SE_P0_1); // Read the dedicated ADC pin!
-        uint32_t sample1 = adc_get_sample();
-        arch_asm_delay_us(2);
-        
-        cfg.sign = false;
-        adc_init(&cfg);
-        adc_set_se_input(ADC_INPUT_SE_P0_1);
-        uint32_t sample2 = adc_get_sample();
-        
-        uint32_t raw_adc = (sample1 + sample2);
-        adc_disable();
-
-        // led_value = (uint8_t)(raw_adc & 0xFF); 
-        
-
-        #if (BLE_CUSTOM1_SERVER)
-            update_batt_data(raw_adc); // Send real accelerometer data (raw)
-            notify_batt_data(raw_adc); // notify corresponding devices
-        #endif
-        user_run = true; 
+        user_run = false; 
     } else if (user_state == BT_INIT) {
         
         // // Skip accelerometer reads - just send test data

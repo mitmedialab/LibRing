@@ -89,28 +89,56 @@ noble.on('discover', async (peripheral) => {
                 const characteristic = char_batt;
                 console.log('Reading characteristic value continuously...');
 
-                const logFile = 'battery_log_0.txt';
+                const logFile = 'battery_log_0_10.txt';
                 fs.appendFileSync(logFile, `\n--- Started Logging at ${new Date().toISOString()} ---\n`);
 
-                // Continuous polling loop
-                while (true) {
-                    try {
-                        const data = await characteristic.readAsync();
-                        const level = data.readUint32BE(0);
-                        const logEntry = `[${new Date().toISOString()}] Battery Level: ${level}\n`;
+                await characteristic.subscribeAsync();
 
-                        process.stdout.write(logEntry); // Pipe to console
-                        fs.appendFileSync(logFile, logEntry); // Pipe to file
+                let lastSend = Date.now();
+                let lastReceive = Date.now();
 
-                        await new Promise((resolve) => setTimeout(resolve, 1000)); // Read every 1 second
-                    } catch (readError) {
-                        console.error(
-                            'Failed to read characteristic (device might have disconnected):',
-                            readError.message,
-                        );
-                        throw readError; // Throw the error so the outer catch block triggers the restart
+                characteristic.on('data', (data, isNotification) => {
+                    lastReceive = Date.now();
+                    const level = data.readUint32BE(0);
+                    const logEntry = `[${new Date().toISOString()}] Battery Level: ${level}\n`;
+                    process.stdout.write(logEntry); // Pipe to console
+                    // console.log(logEntry);
+                    fs.appendFileSync(logFile, logEntry); // Pipe to file
+                });
+
+                setInterval(async () => {
+                    console.log('Sending...');
+                    lastSend = Date.now();
+                    await char_ctrl.writeAsync(new Uint8Array([1]), false);
+
+                    if (Math.abs(lastSend - lastReceive) > 20000) {
+                        console.error('Time between send and receive deviated by more than 20 seconds. Terminating.');
+                        process.exit(1);
                     }
-                }
+                }, 10000);
+
+                // Wait indefinitely while receiving notifications
+                await new Promise(() => {});
+
+                // // Continuous polling loop
+                // while (true) {
+                //     try {
+                //         const data = await characteristic.readAsync();
+                //         const level = data.readUint32BE(0);
+                //         const logEntry = `[${new Date().toISOString()}] Battery Level: ${level}\n`;
+
+                //         process.stdout.write(logEntry); // Pipe to console
+                //         fs.appendFileSync(logFile, logEntry); // Pipe to file
+
+                //         await new Promise((resolve) => setTimeout(resolve, 1000)); // Read every 1 second
+                //     } catch (readError) {
+                //         console.error(
+                //             'Failed to read characteristic (device might have disconnected):',
+                //             readError.message,
+                //         );
+                //         throw readError; // Throw the error so the outer catch block triggers the restart
+                //     }
+                // }
             } else {
                 console.log('Could not find the specified characteristic.');
             }

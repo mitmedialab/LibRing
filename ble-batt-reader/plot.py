@@ -6,10 +6,12 @@ import matplotlib.dates as mdates
 
 # List of tuples: (file_path, legend_name)
 LOG_FILES = [
+    ("battery_log_0_10.txt", "0% Screen Brightness, 10 seconds"),
     ("battery_log_0.txt", "0% Screen Brightness"),
-    ("battery_log_10.txt", "10% Screen Brightness"),
-    ("battery_log_50.txt", "50% Screen Brightness"),
-    ("battery_log_max.txt", "100% Screen Brightness"),
+    # ("battery_log_10_10.txt", "10% Screen Brightness, 10 seconds"),
+    # ("battery_log_10.txt", "10% Screen Brightness"),
+    # ("battery_log_50_10.txt", "50% Screen Brightness, 10 seconds"),
+    # ("battery_log_max_10.txt", "100% Screen Brightness, 10 seconds"),
     # Add more files here as needed
 ]
 

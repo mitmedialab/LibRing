@@ -53,6 +53,10 @@
 #include "prf_utils.h"
 #include <string.h>
 
+#include "battery.h"
+
+#include "adc.h"
+
 /*
  * EXTERNAL VARIABLE DECLARATIONS
  ****************************************************************************************
@@ -80,6 +84,35 @@ void user_custs1_wr_ind_handler(ke_msg_id_t const msgid,
 			// Turn on the LED
 			// LED_GPIO_mode(1);
 			// led_value = 123;
+            
+            adc_config_t cfg =
+            {
+                .mode = ADC_INPUT_MODE_SINGLE_ENDED,
+                .sign = true,
+                .attn = true
+            };
+
+            adc_init(&cfg);
+            arch_asm_delay_us(20);
+            adc_set_se_input(ADC_INPUT_SE_P0_1); // Read the dedicated ADC pin!
+            uint32_t sample1 = adc_get_sample();
+            arch_asm_delay_us(2);
+            
+            cfg.sign = false;
+            adc_init(&cfg);
+            adc_set_se_input(ADC_INPUT_SE_P0_1);
+            uint32_t sample2 = adc_get_sample();
+            
+            uint32_t raw_adc = (sample1 + sample2);
+            adc_disable();
+
+            // led_value = (uint8_t)(raw_adc & 0xFF); 
+            
+
+            #if (BLE_CUSTOM1_SERVER)
+                update_batt_data(raw_adc); // Send real accelerometer data (raw)
+                notify_batt_data(raw_adc); // notify corresponding devices
+            #endif
 
 		} else {
 			// LED_GPIO_mode(0);
@@ -282,7 +315,7 @@ void notify_btn_data(uint8_t btn_pressed) {
     }
 
 
-    // Prepare data buffer (6 bytes)
+    // Prepare data buffer (1 bytes)
     uint8_t data_buffer[1] = {btn_pressed};
 
     // Use message-based approach
