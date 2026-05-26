@@ -14,12 +14,12 @@ TARGET   := prox_reporter
 OUTDIR   := DA14585
 LDSCRIPT := $(OUTDIR)/ldscript_DA14585_586.lds
 
-# Paths relative to this Makefile (Eclipse/ directory).
+# Paths relative to this Makefile (prox_reporter/ directory).
 # Note: Eclipse .cproject uses 6-level paths because it runs from Eclipse/DA14585/;
-# running from Eclipse/ itself only needs 5 levels to reach Firmware_src/.
-SDK      := ../../../../../sdk
-THIRDPTY := ../../../../../third_party
-PROJ_SRC := ../src
+# running from prox_reporter/ itself only needs 4 levels to reach Firmware_src/.
+SDK      := ../../../../sdk
+THIRDPTY := ../../../../third_party
+PROJ_SRC := src
 
 # ── Compiler flags ───────────────────────────────────────────────────────────
 ARCH_FLAGS := -mcpu=cortex-m0 -mthumb
@@ -131,7 +131,7 @@ OBJS    := $(C_OBJS) $(AS_OBJS)
 
 all: $(LDSCRIPT) $(OUTDIR)/$(TARGET).elf $(OUTDIR)/$(TARGET).bin output.bin
 	$(SIZE) $(OUTDIR)/$(TARGET).elf
-	python3 parse_ota.py output.bin
+	python3 Eclipse/parse_ota.py output.bin
 
 $(OUTDIR)/$(TARGET).elf: $(OBJS) | $(LDSCRIPT)
 	$(CC) $(LDFLAGS) $^ $(LIBS) -o $@
@@ -142,14 +142,14 @@ $(OUTDIR)/$(TARGET).bin: $(OUTDIR)/$(TARGET).elf
 # OTA image: 64-byte header + padded binary + XOR checksum (see make_bin_ota.py)
 # Script uses hardcoded relative paths, so run it from the build output directory.
 output.bin: $(OUTDIR)/$(TARGET).bin
-	cd $(OUTDIR) && python3 ../make_bin_ota.py
+	cd $(OUTDIR) && python3 ../Eclipse/make_bin_ota.py
 
 # ── Linker script generation ──────────────────────────────────────────────────
 # Replicates the Eclipse pre-build step from makefile.targets.
 # mem_DA14585_586.lds is found automatically because it lives next to the .lds.S.
 ldscript: $(LDSCRIPT)
 
-EVAL_LDS := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))eval_lds.py
+EVAL_LDS := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))Eclipse/eval_lds.py
 
 $(LDSCRIPT): $(SDK)/common_project_files/ldscripts/ldscript_DA14585_586.lds.S \
              $(PROJ_SRC)/config/da1458x_config_basic.h \
