@@ -46,6 +46,17 @@ jobs:
               run: npm run build
 
             #
+            # Build app3
+            #
+            - name: Install dependencies (music-app)
+              working-directory: apps/music-app
+              run: npm install
+
+            - name: Build music-app
+              working-directory: apps/music-app
+              run: npm run build
+
+            #
             # Prepare deploy directory
             #
             - name: Create deploy structure
@@ -53,6 +64,7 @@ jobs:
                   rm -rf deploy
                   mkdir -p deploy/gesture-recognition
                   mkdir -p deploy/sleep-recognition
+                  mkdir -p deploy/music-app
                   mkdir -p deploy/perlin
                   mkdir -p deploy/camera
 
@@ -61,6 +73,7 @@ jobs:
                   cp -r apps/homepage/* deploy/
                   cp -r apps/gesture-recognition/dist/* deploy/gesture-recognition/
                   cp -r apps/sleep-recognition/dist/* deploy/sleep-recognition/
+                  cp -r apps/music-app/dist/* deploy/music-app/
                   cp -r apps/perlin/* deploy/perlin/
                   cp -r apps/camera/* deploy/camera/
 

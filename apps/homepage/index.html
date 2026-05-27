@@ -39,12 +39,13 @@
         }
 
         .container {
-            /* max-width: 1100px; */
-            width: 90%;
+            max-width: 1050px;
+            width: calc(100% - 2rem);
             margin: 4rem auto;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            display: flex;
+            flex-wrap: wrap;
             gap: 2rem;
+            justify-content: center;
         }
 
         .intro {
@@ -54,6 +55,8 @@
         }
 
         .card {
+            box-sizing: border-box;
+            flex: 0 1 100%;
             background: #ffffff;
             border: 1px solid #e2e8f0;
             border-radius: 12px;
@@ -64,6 +67,14 @@
             color: inherit;
             display: flex;
             flex-direction: column;
+        }
+
+        @media (min-width: 600px) {
+            .card { flex-basis: calc(50% - 1rem); }
+        }
+
+        @media (min-width: 960px) {
+            .card { flex-basis: calc(33.333% - 1.334rem); }
         }
 
         .card:hover {
@@ -133,6 +144,11 @@
             <!-- <span class="badge">Vanilla JS</span> -->
             <h2>📸 Camera Controller</h2>
             <p> Use the ring to remotely control the camera. Snap pictures with the touch sensor on the ring. </p>
+        </a>
+
+        <a href="./music-app/" class="card">
+            <h2>🎵 Web MIDI Interface</h2>
+            <p>Control MIDI instruments with the ring's accelerometer, using X, Y, Z data to send CC for real time effect modulations.</p>
         </a>
 
         <a href="./perlin/" class="card">

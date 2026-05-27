@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Web MIDI Interface – LibRing</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+            integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+            crossorigin="anonymous"
+        />
+        <style>
+            body { min-height: 100vh; }
+            .progress { height: 28px; border-radius: 6px; }
+            .progress-bar { transition: width 0.08s ease-out; border-radius: 6px; }
+            .cc-value { font-family: monospace; font-size: 1.1rem; min-width: 3ch; text-align: right; }
+            .axis-label { font-weight: 600; min-width: 4ch; }
+            #btn-indicator {
+                width: 14px; height: 14px; border-radius: 50%;
+                background-color: #dc3545;
+                transition: background-color 0.1s;
+                flex-shrink: 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container py-4" id="page-midi">
+
+            <!-- Header -->
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
+                <div>
+                    <h1 class="mb-0 h2">Web MIDI Interface</h1>
+                    <p class="text-secondary mb-0 small">LibRing accelerometer → MIDI CC</p>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <span id="ble-status" class="badge bg-secondary">BLE: Disconnected</span>
+                    <span id="midi-status" class="badge bg-secondary">MIDI: Loading…</span>
+                </div>
+            </div>
+
+            <div class="row g-4">
+
+                <!-- Setup card -->
+                <div class="col-lg-5">
+                    <div class="card border-secondary h-100">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3">Setup</h5>
+                            <div class="row g-3">
+                                <div class="col-6">
+                                    <label class="form-label mb-1">
+                                        X Controller
+                                        <span class="text-secondary small">(0–127)</span>
+                                    </label>
+                                    <input
+                                        type="number" class="form-control" id="x-cc"
+                                        min="0" max="127" value="1"
+                                    />
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label mb-1">
+                                        Y Controller
+                                        <span class="text-secondary small">(0–127)</span>
+                                    </label>
+                                    <input
+                                        type="number" class="form-control" id="y-cc"
+                                        min="0" max="127" value="2"
+                                    />
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label mb-1">
+                                        Z Controller
+                                        <span class="text-secondary small">(0–127)</span>
+                                    </label>
+                                    <input
+                                        type="number" class="form-control" id="z-cc"
+                                        min="0" max="127" value="3"
+                                    />
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label mb-1">
+                                        MIDI Channel
+                                        <span class="text-secondary small">(0–15)</span>
+                                    </label>
+                                    <input
+                                        type="number" class="form-control" id="midi-channel"
+                                        min="0" max="15" value="0"
+                                    />
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label mb-1">MIDI Output</label>
+                                    <select class="form-select" id="midi-output">
+                                        <option value="">Loading…</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CC meters card -->
+                <div class="col-lg-7">
+                    <div class="card border-secondary h-100">
+                        <div class="card-body d-flex flex-column justify-content-center gap-3">
+                            <h5 class="card-title mb-1">Live CC Values</h5>
+
+                            <!-- X -->
+                            <div>
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <span class="axis-label text-danger">X</span>
+                                    <span id="x-cc-val" class="cc-value text-secondary">—</span>
+                                </div>
+                                <div class="progress">
+                                    <div id="x-bar" class="progress-bar bg-danger" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <!-- Y -->
+                            <div>
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <span class="axis-label text-primary">Y</span>
+                                    <span id="y-cc-val" class="cc-value text-secondary">—</span>
+                                </div>
+                                <div class="progress">
+                                    <div id="y-bar" class="progress-bar bg-primary" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <!-- Z -->
+                            <div>
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <span class="axis-label text-success">Z</span>
+                                    <span id="z-cc-val" class="cc-value text-secondary">—</span>
+                                </div>
+                                <div class="progress">
+                                    <div id="z-bar" class="progress-bar bg-success" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls row -->
+            <div class="d-flex align-items-center gap-3 mt-4">
+                <button class="btn btn-primary" id="connect-btn">Connect Ring</button>
+                <button class="btn btn-outline-secondary" id="toggle-chart-btn">Show Chart</button>
+                <div class="d-flex align-items-center gap-2 ms-2" id="btn-row" style="display: none !important;">
+                    <span class="small text-secondary">Ring button</span>
+                    <div id="btn-indicator"></div>
+                </div>
+            </div>
+
+            <!-- Accel chart (collapsible) -->
+            <div id="chart-wrapper" class="mt-3" style="display: none;">
+                <div class="card border-secondary">
+                    <div class="card-body" style="height: 240px;">
+                        <canvas id="accel-chart" style="width: 100%; height: 100%;"></canvas>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <script
+            src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+            crossorigin="anonymous"
+        ></script>
+        <script type="module" src="/src/midi-renderer.ts"></script>
+    </body>
+</html>
