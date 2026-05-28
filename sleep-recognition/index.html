@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Document</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+            integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+            crossorigin="anonymous"
+        />
+      <script type="module" crossorigin src="/LibRing/sleep-recognition/assets/index-XDL7N3Yi.js"></script>
+      <link rel="stylesheet" crossorigin href="/LibRing/sleep-recognition/assets/index-DAVgWhaI.css">
+    </head>
+    <body
+        class="bg-dark text-light"
+        id="page-classify"
+        style="
+            height: 100vh;
+            width: 100vw;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        "
+    >
+        <!-- Sleep State Display - Full Screen -->
+        <div
+            id="sleep-state-display"
+            class="flex-grow-1 d-flex flex-column justify-content-center align-items-center p-3 text-center"
+            style="
+                background-color: #2d5f1e;
+                transition: background-color 0.3s ease-in-out;
+                gap: 2vh;
+                width: 100%;
+                flex: 1;
+            "
+        >
+            <div id="sleep-state-label">ACTIVE</div>
+            <div id="sleep-state-info"></div>
+        </div>
+
+        <!-- Connection Button - Floating Bottom Left -->
+        <div
+            id="connect-container"
+            class="floating-wrapper"
+            style="position: absolute; left: 20px; bottom: 20px; z-index: 1000"
+        >
+            <button
+                class="btn btn-primary shadow"
+                id="classify-connect-toggle"
+                style="font-size: 1.25rem; padding: 0.9rem 1.6rem; min-width: 160px"
+            >
+                Connect
+            </button>
+        </div>
+        <script>
+            // Simple page swapping logic
+            const navClassify = document.getElementById('nav-classify');
+            const navTrain = document.getElementById('nav-train');
+            const pageClassify = document.getElementById('page-classify');
+            const pageTrain = document.getElementById('page-train');
+            navClassify.addEventListener('click', () => {
+                navClassify.classList.add('active');
+                navTrain.classList.remove('active');
+                pageClassify.style.display = '';
+                pageTrain.style.display = 'none';
+            });
+            navTrain.addEventListener('click', () => {
+                navTrain.classList.add('active');
+                navClassify.classList.remove('active');
+                pageTrain.style.display = '';
+                pageClassify.style.display = 'none';
+            });
+        </script>
+        <script
+            src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+            crossorigin="anonymous"
+        ></script>
+        <!-- <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script> -->
+        <!-- <script src="https://unpkg.com/ml5@1/dist/ml5.min.js"></script> -->
+        <!-- Main entry point for Vite -->
+        <!-- Your TypeScript renderer entry -->
+        <!-- <script type="module" src="/src/trainer-renderer.ts"></script> -->
+    </body>
+</html>

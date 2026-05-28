@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+        <title>Ring Camera App</title>
+        <!-- BLE input (replaces legacy serial input) -->
+        <script src="ble.js"></script>
+
+        <link rel="stylesheet" type="text/css" href="style.css" />
+    </head>
+    <body>
+        <div id="camera-container">
+            <video id="videoElement" autoplay playsinline></video>
+        </div>
+        <div id="photo-container">
+            <img id="photoElement" src="" alt="Captured Photo" />
+            <canvas id="canvasElement" style="display: none"></canvas>
+            <!-- Connection Button - Floating Bottom Left -->
+            <div class="floating-wrapper" style="left: 20px; bottom: 20px">
+                <button id="connectBtn" class="floating-btn">Connect BLE</button>
+            </div>
+            <!-- Switch Camera Button - Floating Bottom Right -->
+            <div class="floating-wrapper" style="right: 20px; bottom: 20px">
+                <button id="switchCameraBtn" class="floating-btn">Switch Camera</button>
+            </div>
+        </div>
+
+        <script src="index.js"></script>
+    </body>
+</html>

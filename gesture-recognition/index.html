@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Document</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+            integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+            crossorigin="anonymous"
+        />
+      <script type="module" crossorigin src="/LibRing/gesture-recognition/assets/index-CzucooVH.js"></script>
+      <link rel="stylesheet" crossorigin href="/LibRing/gesture-recognition/assets/index-JRgtyXc3.css">
+    </head>
+    <body
+        class="bg-dark text-light"
+        id="page-classify"
+        style="
+            height: 100vh;
+            width: 100vw;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        "
+    >
+        <!-- Sleep State Display - Full Screen -->
+        <div
+            id="sleep-state-display"
+            class="flex-grow-1 d-flex flex-column justify-content-center align-items-center p-3 text-center"
+            style="background-color: #2d5f1e; gap: 2vh; width: 100%; flex: 1"
+        >
+            <div id="sleep-state-label">IDLE</div>
+            <div id="classify-ml-classify-result" style="display: none"></div>
+            <div id="sleep-state-info"></div>
+        </div>
+
+        <!-- Connection Button - Floating Bottom Left -->
+        <div class="floating-wrapper" style="left: 20px; bottom: 20px">
+            <button class="btn btn-primary" id="classify-connect-toggle">Connect</button>
+        </div>
+
+        <!-- Graph expander - Full Width Above Buttons -->
+        <div
+            id="chart-wrapper"
+            style="position: absolute; left: 20px; right: 20px; bottom: 80px; display: none; z-index: 900"
+        >
+            <div
+                id="chart-container"
+                class="bg-dark rounded p-2 border border-secondary d-flex flex-column"
+                style="width: 100%; height: 300px"
+            >
+                <canvas
+                    id="classify-accel-chart"
+                    class="bg-dark flex-grow-1"
+                    style="width: 100%; min-height: 0"
+                ></canvas>
+
+                <div class="d-flex align-items-center justify-content-center pt-2 mt-2" style="gap: 10px">
+                    <h5 class="m-0 fs-6">Button Pressed</h5>
+                    <div
+                        id="btn-indicator"
+                        style="
+                            width: 16px;
+                            height: 16px;
+                            flex-shrink: 0;
+                            border-radius: 50%;
+                            background-color: red;
+                            transition: background-color 0.1s;
+                        "
+                    ></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toggle Graph Button - Floating Bottom Right -->
+        <div class="floating-wrapper" style="right: 20px; bottom: 20px; z-index: 1000">
+            <button class="btn btn-secondary w-100 mb-2" id="toggle-graph-btn">Show Graph</button>
+        </div>
+
+        <script>
+            // Toggle graph logic
+            const toggleGraphBtn = document.getElementById('toggle-graph-btn');
+            const chartWrapper = document.getElementById('chart-wrapper');
+            toggleGraphBtn.addEventListener('click', () => {
+                if (chartWrapper.style.display === 'none') {
+                    chartWrapper.style.display = 'block';
+                    document.body.classList.add('graph-open');
+                    toggleGraphBtn.textContent = 'Hide Graph';
+                } else {
+                    chartWrapper.style.display = 'none';
+                    document.body.classList.remove('graph-open');
+                    toggleGraphBtn.textContent = 'Show Graph';
+                }
+            });
+        </script>
+
+        <script
+            src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+            crossorigin="anonymous"
+        ></script>
+        <!-- Main entry point for Vite -->
+        <!-- Your TypeScript renderer entry -->
+    </body>
+</html>

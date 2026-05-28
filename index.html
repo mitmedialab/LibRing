@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LibRing Demos</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        header {
+            background-color: #1a202c;
+            color: #edf2f7;
+            width: 100%;
+            padding: 3rem 0;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 3rem;
+            letter-spacing: -0.05rem;
+        }
+
+        p.subtitle {
+            margin-top: 0.5rem;
+            font-size: 1.25rem;
+            color: #a0aec0;
+        }
+
+        .container {
+            max-width: 1050px;
+            width: calc(100% - 2rem);
+            margin: 4rem auto;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2rem;
+            justify-content: center;
+        }
+
+        .intro {
+            line-height: 1.6;
+            color: #4a5568;
+            padding: 0.25rem 0.75rem;
+        }
+
+        .card {
+            box-sizing: border-box;
+            flex: 0 1 100%;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: inherit;
+            display: flex;
+            flex-direction: column;
+        }
+
+        @media (min-width: 600px) {
+            .card { flex-basis: calc(50% - 1rem); }
+        }
+
+        @media (min-width: 960px) {
+            .card { flex-basis: calc(33.333% - 1.334rem); }
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.08);
+            border-color: #cbd5e0;
+        }
+
+        .card h2 {
+            margin-top: 0;
+            color: #2b6cb0;
+            font-size: 1.5rem;
+        }
+
+        .card p {
+            line-height: 1.6;
+            flex-grow: 1;
+            color: #4a5568;
+        }
+
+        .badge {
+            align-self: flex-start;
+            background: #ebf8ff;
+            color: #3182ce;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>LibRing</h1>
+        <p class="subtitle">Smart Ring Research Demonstrations</p>
+    </header>
+
+    <div class="intro">
+        <p>
+            This page lists a few research demos illustrating possibilities with a reverse engineered smart ring
+            available online
+            (examples: <a href="https://archive.is/37wOh">amazon</a>, <a
+                href="https://archive.is/HKFeD">aliexpress</a>).
+            More information can be found in the <a href="https://github.com/mitmedialab/LibRing">repository</a>.
+        </p>
+    </div>
+
+    <div class="container">
+        <a href="./gesture-recognition/" class="card">
+            <!-- <span class="badge">Vite + TS</span> -->
+            <h2>👋 Gesture Recognition</h2>
+            <p> Interactive demonstration of real-time gesture recognition using the LibRing device. Classifies
+                movements on the fly. </p>
+        </a>
+
+        <a href="./sleep-recognition/" class="card">
+            <!-- <span class="badge">Vite + TS</span> -->
+            <h2>✨ Sleep Recognition</h2>
+            <p>Monitor and analyze movements and sleep stages. Demonstrates classification of resting states.</p>
+        </a>
+
+        <a href="./camera/" class="card">
+            <!-- <span class="badge">Vanilla JS</span> -->
+            <h2>📸 Camera Controller</h2>
+            <p> Use the ring to remotely control the camera. Snap pictures with the touch sensor on the ring. </p>
+        </a>
+
+        <a href="./music-app/" class="card">
+            <h2>🎵 Web MIDI Interface</h2>
+            <p>Control MIDI instruments with the ring's accelerometer, using X, Y, Z data to send CC for real time effect modulations.</p>
+        </a>
+
+        <a href="./perlin/" class="card">
+            <!-- <span class="badge">p5.js</span> -->
+            <h2>↝ Perlin Noise Visualizer</h2>
+            <p> An interactive visualizer manipulating Perlin noise fields in real-time using accelerometer data from
+                the ring. </p>
+        </a>
+    </div>
+</body>
+
+</html>
