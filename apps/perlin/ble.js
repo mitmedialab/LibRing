@@ -106,7 +106,7 @@
       }
 
       device = await navigator.bluetooth.requestDevice({
-        filters: [{ name: 'TEST' }],
+        filters: [{ name: 'LibRing' }, { name: 'TEST' }], // TEST: rings flashed before the rename
         optionalServices: [serviceUuid]
       });
 

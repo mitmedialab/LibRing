@@ -77,7 +77,7 @@ export async function connectToBLE() {
     console.log('Requesting Bluetooth devices...');
     device = await navigator.bluetooth.requestDevice({
         // acceptAllDevices: true,
-        filters: [{ name: 'TEST' }],
+        filters: [{ name: 'LibRing' }, { name: 'TEST' }], // TEST: rings flashed before the rename
         optionalServices: [serviceUuid],
     });
 

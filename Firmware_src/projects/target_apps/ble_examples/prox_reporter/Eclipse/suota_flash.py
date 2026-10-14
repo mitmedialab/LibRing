@@ -5,7 +5,7 @@ Requires: pip install bleak
 
   suota_flash.py --scan                          list nearby rings, strongest signal first
   suota_flash.py output.bin                      flash the nearest ring
-  suota_flash.py output.bin --name TEST          only rings named *TEST* (custom firmware)
+  suota_flash.py output.bin --name LibRing       only rings named *LibRing* (custom firmware)
   suota_flash.py output.bin --min-rssi -55       only rings close to the computer
   suota_flash.py output.bin --address AA:BB:...  one specific ring
   suota_flash.py output.bin --all                every matching ring, one after the other
@@ -67,7 +67,7 @@ def advertised_product_id(adv):
 def looks_like_ring(dev, adv):
     return (SUOTA_SERVICE in adv.service_uuids
             or advertised_product_id(adv) is not None
-            or (dev.name or adv.local_name) == "TEST")
+            or (dev.name or adv.local_name) in ("LibRing", "TEST"))  # TEST: before the rename
 
 
 async def scan(args):

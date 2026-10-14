@@ -49,7 +49,7 @@ make flash FLASH_ARGS="--address 48:23:35:F4:00:10"
 make flash FLASH_ARGS="--all --min-rssi -60"    # every ring close to the computer, one by one
 ```
 
-- Stock rings show their product ID in `make scan` and are skipped if it doesn't match the build. Flashed rings advertise as `TEST`.
+- Stock rings show their product ID in `make scan` and are skipped if it doesn't match the build. Flashed rings advertise as `LibRing`.
 - A ring connected to another app (e.g. a web demo) stops advertising: disconnect it first.
 - If the connection keeps dropping, raise Linux's BLE supervision timeout from 420 ms to 4 s (once):
   ```sh
