@@ -164,12 +164,12 @@ connectBtn.addEventListener('click', async () => {
     }
 });
 
-// ─── Chart toggle ─────────────────────────────────────────────────────────────
+// ─── Graph toggle ─────────────────────────────────────────────────────────────
 
 toggleChartBtn.addEventListener('click', () => {
     const visible = chartWrapper.style.display !== 'none';
     chartWrapper.style.display = visible ? 'none' : 'block';
-    toggleChartBtn.textContent = visible ? 'Show Chart' : 'Hide Chart';
+    toggleChartBtn.textContent = visible ? 'Show Graph' : 'Hide Graph';
 });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────

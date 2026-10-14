@@ -145,15 +145,15 @@
             <!-- Controls row -->
             <div class="d-flex align-items-center gap-3 mt-4">
                 <button class="btn btn-primary" id="connect-btn">Connect Ring</button>
-                <button class="btn btn-outline-secondary" id="toggle-chart-btn">Show Chart</button>
+                <button class="btn btn-outline-secondary" id="toggle-chart-btn">Hide Graph</button>
                 <div class="d-flex align-items-center gap-2 ms-2" id="btn-row" style="display: none !important;">
                     <span class="small text-secondary">Ring button</span>
                     <div id="btn-indicator"></div>
                 </div>
             </div>
 
-            <!-- Accel chart (collapsible) -->
-            <div id="chart-wrapper" class="mt-3" style="display: none;">
+            <!-- Accel graph (collapsible, shown by default) -->
+            <div id="chart-wrapper" class="mt-3" style="display: block;">
                 <div class="card border-secondary">
                     <div class="card-body" style="height: 240px;">
                         <canvas id="accel-chart" style="width: 100%; height: 100%;"></canvas>

@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Document</title>
+        <title>Gesture Recognition – LibRing</title>
         <link
             href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
             rel="stylesheet"
@@ -13,7 +13,7 @@
         <link rel="stylesheet" href="/src/index.css" />
     </head>
     <body
-        class="bg-dark text-light"
+        class="bg-dark text-light graph-open"
         id="page-classify"
         style="
             height: 100vh;
@@ -44,7 +44,7 @@
         <!-- Graph expander - Full Width Above Buttons -->
         <div
             id="chart-wrapper"
-            style="position: absolute; left: 20px; right: 20px; bottom: 80px; display: none; z-index: 900"
+            style="position: absolute; left: 20px; right: 20px; bottom: 80px; display: block; z-index: 900"
         >
             <div
                 id="chart-container"
@@ -76,7 +76,7 @@
 
         <!-- Toggle Graph Button - Floating Bottom Right -->
         <div class="floating-wrapper" style="right: 20px; bottom: 20px; z-index: 1000">
-            <button class="btn btn-secondary w-100 mb-2" id="toggle-graph-btn">Show Graph</button>
+            <button class="btn btn-secondary w-100 mb-2" id="toggle-graph-btn">Hide Graph</button>
         </div>
 
         <script>
