@@ -116,6 +116,10 @@ bool has_timer_started = false;
 // main timer tick, whatever the button state (the display modes are independent)
 static bool accel_streaming = false;
 
+// true while a firmware update (SUOTA) is in progress: the display and the
+// accelerometer are paused so that nothing can slow down or break the update
+static bool suota_active = false;
+
 static void button_hold_timer_cb(void)
 {
     button_hold_timer_hnd = EASY_TIMER_INVALID_TIMER;
@@ -250,12 +254,15 @@ static void timer_cb(void)
                     {
                         counter_ms = 0;
                         counter_time++;
-                        arch_printf("Time %i MS: %i\r\n", realUnix, lld_evt_time_get());
-                        //if(realUnix - turnOnTime >= 10)
-                            //       LED_GPIO_mode(0);
+                        // no arch_printf() here: it allocates from the kernel heap,
+                        // which is not safe from an interrupt
                     }
-                    memset(LED_Buffer,0x00,sizeof(LED_Buffer));
-                    refreshMenu();
+                    // The fluid simulation is too heavy for this 1.5 ms interrupt (it
+                    // starved BLE and the watchdog): main_timer_cb() updates LED_Buffer
+                    if (user_state != FLUID_MODE) {
+                        memset(LED_Buffer,0x00,sizeof(LED_Buffer));
+                        refreshMenu();
+                    }
             }
 
             LED_write(LED_Buffer, current_line);
@@ -304,6 +311,11 @@ void user_accel_streaming(bool enable) {
 }
 
 static void main_timer_cb(void) {
+
+    if (suota_active) {
+        start_main_timer();
+        return;
+    }
 
     if (accel_streaming) {
         read_and_notify_accel();
@@ -377,6 +389,7 @@ static void main_timer_cb(void) {
         if (!accel_streaming) {
             read_and_notify_accel(); // still needed for the fluid display
         }
+        refreshMenu(); // fluid step + LED_Buffer update, out of the LED interrupt
 
         user_run = true;
     } else if (user_state == BATT_MODE) {
@@ -512,13 +525,13 @@ void user_app_on_init(void)
      fluid_5x25_init(&g_fluid);
 }
 
-void user_app_on_db_init_complete(void)
+static void fluid_start_cb(void)
 {
-    default_app_on_db_init_complete();
-
-    // The fluid simulation is always displayed, from boot (it also keeps the
-    // system awake, so the accelerometer I2C bus stays powered)
-    LED_GPIO_mode(1);
+    // The fluid simulation is always displayed (it also keeps the system
+    // awake, so the accelerometer I2C bus stays powered)
+    if (!suota_active) {
+        LED_GPIO_mode(1);
+    }
     accel_init();
     accel_config();
     sens = SENS_16G;
@@ -527,6 +540,16 @@ void user_app_on_db_init_complete(void)
     user_run = true;
     has_timer_started = true;
     start_main_timer();
+}
+
+void user_app_on_db_init_complete(void)
+{
+    default_app_on_db_init_complete();
+
+    // Start the display a few seconds after boot: if a firmware bug ever makes
+    // the ring reset in a loop, this leaves a window to start a SUOTA update
+    // (which pauses the display) and flash a fixed firmware
+    app_easy_timer(500, fluid_start_cb); // 5 s
 }
 
 static void app_button_press_cb(void)
@@ -590,6 +613,14 @@ void app_button_enable(void)
 #if (BLE_SUOTA_RECEIVER)
 void on_suotar_status_change(const uint8_t suotar_event)
 {
+    if (suotar_event == SUOTAR_START) {
+        suota_active = true;
+        LED_GPIO_mode(0);
+        arch_force_active_mode(); // stay awake during the update (keeps the I2C setup)
+    } else if (suotar_event == SUOTAR_END) {
+        suota_active = false; // display resumes if the update was aborted
+    }
+
 #if (!SUOTAR_SPI_DISABLE)
     uint8_t dev_id;
 

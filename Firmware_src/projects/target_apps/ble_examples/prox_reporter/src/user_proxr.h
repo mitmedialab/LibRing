@@ -186,7 +186,7 @@ void app_button_enable(void);
  */
 void user_app_on_init(void);
 
-// Starts the always-on fluid display once the BLE database is ready
+// Starts the always-on fluid display, 5 s after the BLE database is ready
 void user_app_on_db_init_complete(void);
 void app_advertise_complete(const uint8_t status);
 
