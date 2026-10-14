@@ -185,6 +185,9 @@ void app_button_enable(void);
  ****************************************************************************************
  */
 void user_app_on_init(void);
+
+// Starts the always-on fluid display once the BLE database is ready
+void user_app_on_db_init_complete(void);
 void app_advertise_complete(const uint8_t status);
 
 #if (BLE_SUOTA_RECEIVER)
@@ -221,6 +224,10 @@ void user_catch_rest_hndl(ke_msg_id_t const msgid,
                           ke_task_id_t const src_id);
 
 void LED_GPIO_mode(uint8_t mode); 
+
+// Start/stop streaming accelerometer notifications (called when a BLE client
+// subscribes/unsubscribes to the accel characteristic, and on disconnect).
+void user_accel_streaming(bool enable);
 
 /// @} APP
 

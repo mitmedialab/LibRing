@@ -81,6 +81,10 @@ void user_custs1_wr_ind_handler(ke_msg_id_t const msgid,
 			LED_GPIO_mode(0);
 		}
 	}
+	else if (param->handle == SVC1_IDX_ACCEL_NTF_CFG)
+	{
+		user_accel_streaming(param->value[0] & PRF_CLI_START_NTF);
+	}
 }
 
 uint8_t update_accel_data(const accel_sensitivity_t* sens, const accel_data_t *accel_data)

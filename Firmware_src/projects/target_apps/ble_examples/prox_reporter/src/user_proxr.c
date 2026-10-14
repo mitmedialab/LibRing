@@ -112,6 +112,10 @@ bool user_run = false;
 
 bool has_timer_started = false; 
 
+// true while a BLE client is subscribed to accel notifications: stream at every
+// main timer tick, whatever the button state (the display modes are independent)
+static bool accel_streaming = false;
+
 static void button_hold_timer_cb(void)
 {
     button_hold_timer_hnd = EASY_TIMER_INVALID_TIMER;
@@ -258,7 +262,52 @@ static void timer_cb(void)
     }
 }
 
+void start_main_timer(void);
+
+static void read_and_notify_accel(void) {
+    accel_data_t data;
+    if (!accel_cmd_readaccel(&data)) {
+        return;
+    }
+    // cache converted-to-mg values for display (avoid I2C from ISR)
+    accel_data_t mg = data;
+    accel_convert_to_mg(&mg, sens);
+    g_last_accel_mg = mg;
+
+    #if (BLE_CUSTOM1_SERVER)
+        update_accel_data(&sens, &data); // Send real accelerometer data (raw)
+        notify_accel_data(&sens, &data); // notify corresponding devices
+    #endif
+}
+
+void user_accel_streaming(bool enable) {
+    if (enable == accel_streaming) {
+        return;
+    }
+    accel_streaming = enable;
+    arch_printf("Accel streaming: %d\r\n", enable);
+
+    if (enable) {
+        // Keep the I2C peripheral powered while streaming (sleep turns it off)
+        arch_force_active_mode();
+        accel_init();
+        accel_config();
+        sens = SENS_16G;
+
+        if (!has_timer_started) {
+            has_timer_started = true;
+            start_main_timer();
+        }
+    } else if (!LED_Display_state) {
+        arch_restore_sleep_mode();
+    }
+}
+
 static void main_timer_cb(void) {
+
+    if (accel_streaming) {
+        read_and_notify_accel();
+    }
 
     if (!user_run) {
         start_main_timer();
@@ -325,19 +374,9 @@ static void main_timer_cb(void) {
         //     notify_accel_data(&sens, &data);
         // #endif
 
-        accel_data_t data;
-        accel_cmd_readaccel(&data);
-        // cache converted-to-mg values for display (avoid I2C from ISR)
-        {
-            accel_data_t mg = data;
-            accel_convert_to_mg(&mg, sens);
-            g_last_accel_mg = mg;
+        if (!accel_streaming) {
+            read_and_notify_accel(); // still needed for the fluid display
         }
-
-        #if (BLE_CUSTOM1_SERVER)
-            update_accel_data(&sens, &data); // Send real accelerometer data (raw)
-            notify_accel_data(&sens, &data); // notify corresponding devices
-        #endif
 
         user_run = true;
     } else if (user_state == BATT_MODE) {
@@ -397,21 +436,9 @@ static void main_timer_cb(void) {
     } else if (user_state == BT_NOTIF) {
         // Force active mode to prevent sleep from powering down I2C peripheral
         
-        // Read accelerometer data
-        accel_data_t data;
-        accel_cmd_readaccel(&data);
-        // cache converted-to-mg values for display (avoid I2C from ISR)
-        {
-            accel_data_t mg = data;
-            accel_convert_to_mg(&mg, sens);
-            g_last_accel_mg = mg;
+        if (!accel_streaming) {
+            read_and_notify_accel();
         }
-
-        #if (BLE_CUSTOM1_SERVER)
-            update_accel_data(&sens, &data); // Send real accelerometer data (raw)
-            notify_accel_data(&sens, &data); // notify corresponding devices
-        #endif
-        
         
         user_run = true; // Continuous updates
     } else {
@@ -485,6 +512,23 @@ void user_app_on_init(void)
      fluid_5x25_init(&g_fluid);
 }
 
+void user_app_on_db_init_complete(void)
+{
+    default_app_on_db_init_complete();
+
+    // The fluid simulation is always displayed, from boot (it also keeps the
+    // system awake, so the accelerometer I2C bus stays powered)
+    LED_GPIO_mode(1);
+    accel_init();
+    accel_config();
+    sens = SENS_16G;
+
+    user_state = FLUID_MODE;
+    user_run = true;
+    has_timer_started = true;
+    start_main_timer();
+}
+
 static void app_button_press_cb(void)
 {
     app_resume_system_from_sleep();
@@ -521,17 +565,7 @@ static void app_button_press_cb(void)
         app_easy_timer_cancel(button_hold_timer_hnd);
         button_hold_timer_hnd = EASY_TIMER_INVALID_TIMER;
     }
-    if (!pin_val) return; // only change state on rising edge
-
-    if (user_state == DEFAULT && !has_timer_started) {
-        has_timer_started = true; 
-        start_main_timer(); 
-    }
-
-    if (user_state != BATT_MODE) {
-        user_state = (user_state + 1) % NUM_STATES;
-        user_run = true; 
-    }
+    // Taps no longer change the state: the fluid display is always on.
 }
 
 void app_button_enable(void)
@@ -580,6 +614,8 @@ void user_app_on_disconnect(struct gapc_disconnect_ind const *param)
 {
     arch_printf("BLE Disconnected\r\n");
     default_app_on_disconnect(NULL);
+
+    user_accel_streaming(false);
 
     // if (main_timer_hnd != EASY_TIMER_INVALID_TIMER) {
     //     app_easy_timer_cancel(main_timer_hnd);
