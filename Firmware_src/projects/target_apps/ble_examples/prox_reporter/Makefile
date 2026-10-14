@@ -130,7 +130,7 @@ AS_OBJS := $(addprefix $(OUTDIR)/obj/,$(notdir $(ASM_SRCS:.S=.o)))
 OBJS    := $(C_OBJS) $(AS_OBJS)
 
 # ── Top-level targets ─────────────────────────────────────────────────────────
-.PHONY: all clean ldscript output.bin
+.PHONY: all clean ldscript output.bin flash scan
 
 all: $(LDSCRIPT) $(OUTDIR)/$(TARGET).elf $(OUTDIR)/$(TARGET).bin output.bin
 	$(SIZE) $(OUTDIR)/$(TARGET).elf
@@ -147,6 +147,16 @@ $(OUTDIR)/$(TARGET).bin: $(OUTDIR)/$(TARGET).elf
 # Phony so that a PRODUCT_ID change always rewrites the header.
 output.bin: $(OUTDIR)/$(TARGET).bin
 	cd $(OUTDIR) && python3 ../Eclipse/make_bin_ota.py --product-id $(PRODUCT_ID)
+
+# Flash over BLE from this computer (pip install bleak), see Eclipse/suota_flash.py --help.
+# e.g. make flash                          nearest ring
+#      make flash FLASH_ARGS="--all --min-rssi -60"
+#      make scan
+flash: output.bin
+	python3 Eclipse/suota_flash.py output.bin $(FLASH_ARGS)
+
+scan:
+	python3 Eclipse/suota_flash.py --scan $(FLASH_ARGS)
 
 # ── Linker script generation ──────────────────────────────────────────────────
 # Replicates the Eclipse pre-build step from makefile.targets.
