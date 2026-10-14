@@ -11,7 +11,8 @@ Header layout (64 bytes, from make_bin_ota.py / ATC1441):
   [28-31] timestamp  Unix epoch (uint32 LE)
   [32]   enc_flag    0x00 = unencrypted
   [33-36] code_size  raw firmware byte count (uint32 LE)
-  [37-40] custom     0x00170001
+  [37-38] u16 0x0001
+  [39-40] product_id u16, 0x004C or 0x0017, must match the ring's own ID
   [41-63] reserved   0xFF * 23
   [-1]   xor_check   XOR of every byte except the last
 """
@@ -46,5 +47,5 @@ print(f"  CRC32     : 0x{crc32:08x}")
 print(f"  Version   : {version!r}")
 print(f"  Timestamp : {datetime.datetime.fromtimestamp(ts)}")
 print(f"  Encrypted : {'yes' if enc else 'no'}")
-print(f"  Custom    : 0x{custom:08x}")
+print(f"  Product ID: 0x{custom >> 16:04x}")
 print(f"  XOR check : {'OK' if xor_chk == xor_ref else f'BAD (file=0x{xor_chk:02x} expected=0x{xor_ref:02x})'}")

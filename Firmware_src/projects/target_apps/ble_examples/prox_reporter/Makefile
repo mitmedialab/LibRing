@@ -11,6 +11,9 @@ OBJCOPY := $(CROSS)objcopy
 SIZE    := $(CROSS)size
 
 TARGET   := prox_reporter
+# OTA product ID of the ring (last 2 bytes of its BLE manufacturer data, e.g. ...0001004C):
+# 4C = rings bought in 2026, 17 = older SR08 rings (make PRODUCT_ID=17).
+PRODUCT_ID ?= 4C
 OUTDIR   := DA14585
 LDSCRIPT := $(OUTDIR)/ldscript_DA14585_586.lds
 
@@ -127,7 +130,7 @@ AS_OBJS := $(addprefix $(OUTDIR)/obj/,$(notdir $(ASM_SRCS:.S=.o)))
 OBJS    := $(C_OBJS) $(AS_OBJS)
 
 # ── Top-level targets ─────────────────────────────────────────────────────────
-.PHONY: all clean ldscript
+.PHONY: all clean ldscript output.bin
 
 all: $(LDSCRIPT) $(OUTDIR)/$(TARGET).elf $(OUTDIR)/$(TARGET).bin output.bin
 	$(SIZE) $(OUTDIR)/$(TARGET).elf
@@ -141,8 +144,9 @@ $(OUTDIR)/$(TARGET).bin: $(OUTDIR)/$(TARGET).elf
 
 # OTA image: 64-byte header + padded binary + XOR checksum (see make_bin_ota.py)
 # Script uses hardcoded relative paths, so run it from the build output directory.
+# Phony so that a PRODUCT_ID change always rewrites the header.
 output.bin: $(OUTDIR)/$(TARGET).bin
-	cd $(OUTDIR) && python3 ../Eclipse/make_bin_ota.py
+	cd $(OUTDIR) && python3 ../Eclipse/make_bin_ota.py --product-id $(PRODUCT_ID)
 
 # ── Linker script generation ──────────────────────────────────────────────────
 # Replicates the Eclipse pre-build step from makefile.targets.
