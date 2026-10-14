@@ -10,8 +10,13 @@ Requires: pip install bleak
   suota_flash.py output.bin --address AA:BB:...  one specific ring
   suota_flash.py output.bin --all                every matching ring, one after the other
 
-Rings running the stock firmware advertise their product ID (manufacturer data ending
-with 0001XXXX) and reject an image built for another ID, so those rings are skipped.
+Rings running the stock firmware advertise their product ID (manufacturer data containing
+0001XXXX) and reject an image built for another ID, so those rings are skipped.
+
+If connections keep dropping, raising Linux's default BLE supervision timeout (420 ms)
+may help (units of 10 ms), then restart Bluetooth:
+  sudo sed -i 's/^#ConnectionSupervisionTimeout=$/ConnectionSupervisionTimeout=400/' /etc/bluetooth/main.conf
+  sudo systemctl restart bluetooth
 """
 import argparse
 import asyncio
@@ -27,7 +32,6 @@ GPIO_MAP             = "724249f0-5ec3-4b5f-8804-42345af08651"
 PATCH_LEN            = "9d84b9a3-000c-49d8-9183-855b673fda31"
 PATCH_DATA           = "457871e8-d516-4ca1-9116-57d0b17b9cb2"
 SERV_STATUS          = "5f78df94-798c-46f5-990a-b3eb6a065c88"
-PATCH_DATA_CHAR_SIZE = "42c3dfdd-77be-4d9c-8454-8f875267fb3b"  # SUOTA >= 1.3 only
 
 MEM_SPI_FLASH = 0x13
 CMD_IMG_END   = 0xFE
@@ -51,11 +55,12 @@ class SuotaError(RuntimeError):
 
 
 def advertised_product_id(adv):
-    """Product ID from manufacturer data ending with 0001XXXX (stock firmware), else None."""
+    """Product ID from stock firmware manufacturer data (e.g. ...6F 00010017 00), else None."""
     for company_id, data in adv.manufacturer_data.items():
         raw = struct.pack("<H", company_id) + data
-        if len(raw) >= 4 and raw[-4:-2] == b"\x00\x01":
-            return struct.unpack(">H", raw[-2:])[0]
+        for tail in (raw[-4:], raw[-5:-1]):  # 0001XXXX, optionally followed by 1 byte
+            if len(tail) == 4 and tail[:3] == b"\x00\x01\x00":
+                return tail[3]
     return None
 
 
@@ -89,11 +94,11 @@ async def scan(args):
 def print_rings(rings):
     print(f"{'address':17s}  {'rssi':>4s}  {'name':12s}  product ID")
     for rssi, dev, name, pid in rings:
-        pid_str = f"0x{pid:02X}" if pid is not None else "- (custom fw)"
+        pid_str = f"0x{pid:02X}" if pid is not None else "-"
         print(f"{dev.address:17s}  {rssi:4d}  {name:12s}  {pid_str}")
 
 
-async def flash(dev, image, args):
+async def flash(dev, image, args, stock_firmware):
     status = asyncio.Queue()
     connected_at = time.monotonic()
 
@@ -116,17 +121,10 @@ async def flash(dev, image, args):
         connected_at = time.monotonic()
         await client.start_notify(SERV_STATUS, lambda _, data: status.put_nowait(data[0]))
 
-        # Data chunk size: as large as the ring and the connection allow
-        chunk = 20
-        try:
-            if args.chunk:
-                raise ValueError
-            chunk = struct.unpack("<H", await client.read_gatt_char(PATCH_DATA_CHAR_SIZE))[0]
-            await client._backend._acquire_mtu()
-            chunk = min(chunk, client.mtu_size - 3)
-        except Exception:
-            chunk = 20
-        chunk = args.chunk or max(20, min(chunk, args.block_size))
+        # 20-byte writes, like the Android app: larger ones (up to 240 bytes on our
+        # firmware) are faster but the link often drops with them. The stock firmware
+        # also errors on reads of the optional SUOTA 1.3 characteristics (chunk size).
+        chunk = args.chunk or 20
 
         await client.write_gatt_char(MEM_DEV, struct.pack("<I", (MEM_SPI_FLASH << 24) | args.bank), response=True)
         await expect(ST_IMG_STARTED, "start")
@@ -148,7 +146,14 @@ async def flash(dev, image, args):
         print(f"  ({time.monotonic() - start:.1f} s, {chunk}-byte chunks)")
 
         await client.write_gatt_char(MEM_DEV, struct.pack("<I", CMD_IMG_END << 24), response=True)
-        await expect(ST_CMP_OK, "image check")
+        try:
+            await expect(ST_CMP_OK, "image check")
+        except SuotaError as e:
+            # The stock receiver reports a CRC error although the image boots fine
+            # (the Android app offers to skip it). Never ignore it on our firmware.
+            if not stock_firmware:
+                raise
+            print(f"  {e}: ignored on stock firmware, like 'skip' in the SUOTA app")
         try:
             # The ring disconnects to reboot, which may interrupt this write
             await client.write_gatt_char(MEM_DEV, struct.pack("<I", CMD_REBOOT << 24), response=True)
@@ -167,9 +172,9 @@ async def main():
     parser.add_argument("--all", action="store_true", help="flash every matching ring instead of the nearest one")
     parser.add_argument("--force", action="store_true", help="flash even if the advertised product ID differs")
     parser.add_argument("--scan-time", type=float, default=5.0, help="scan duration in seconds (default: 5)")
-    parser.add_argument("--retries", type=int, default=3,
-                        help="attempts per ring on connection problems (default: 3)")
-    parser.add_argument("--chunk", type=int, help="bytes per BLE write (default: largest possible)")
+    parser.add_argument("--retries", type=int, default=5,
+                        help="attempts per ring on connection problems (default: 5)")
+    parser.add_argument("--chunk", type=int, help="bytes per BLE write (default: 20; up to 240 on the custom firmware: faster, less reliable)")
     parser.add_argument("--block-size", type=int, default=240, help="SUOTA block size (default: 240)")
     parser.add_argument("--bank", type=int, choices=(0, 1, 2), default=0, help="image bank, 0 = oldest (default)")
     args = parser.parse_args()
@@ -200,11 +205,11 @@ async def main():
                   f" (rebuild with: make PRODUCT_ID={pid:02X})")
             failed.append(dev.address)
             continue
-        # The first connection to a ring often drops during GATT service discovery
-        # (BlueZ caches the services once it succeeds), so retry connection problems.
+        # Connections often drop (see the supervision timeout above): retry, the
+        # transfer restarts from the beginning.
         for attempt in range(1, args.retries + 1):
             try:
-                await flash(dev, image, args)
+                await flash(dev, image, args, stock_firmware=pid is not None)
                 print("  done, the ring is rebooting")
                 break
             except SuotaError as e:
@@ -217,6 +222,8 @@ async def main():
                     failed.append(dev.address)
                 else:
                     await asyncio.sleep(2)
+                    # BlueZ forgets a device after failed connections: scan for it again
+                    dev = await BleakScanner.find_device_by_address(dev.address, timeout=10) or dev
     if failed:
         sys.exit(f"\n{len(failed)} ring(s) not flashed: {', '.join(failed)}")
 

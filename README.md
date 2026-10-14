@@ -44,13 +44,18 @@ Flash it from the computer over BLE (Linux only for now, needs `pip install blea
 
 ```sh
 make scan                                       # list nearby rings, strongest signal first
-make flash                                      # build, then flash the nearest ring (~20 s)
+make flash                                      # build, then flash the nearest ring (~50 s)
 make flash FLASH_ARGS="--address 48:23:35:F4:00:10"
 make flash FLASH_ARGS="--all --min-rssi -60"    # every ring close to the computer, one by one
 ```
 
 - Stock rings show their product ID in `make scan` and are skipped if it doesn't match the build. Flashed rings advertise as `TEST`.
 - A ring connected to another app (e.g. a web demo) stops advertising: disconnect it first.
+- If the connection keeps dropping, raise Linux's BLE supervision timeout from 420 ms to 4 s (once):
+  ```sh
+  sudo sed -i 's/^#ConnectionSupervisionTimeout=$/ConnectionSupervisionTimeout=400/' /etc/bluetooth/main.conf
+  sudo systemctl restart bluetooth
+  ```
 - More options (`--name`, `--product-id`, `--retries`, `--chunk`...): `python3 Eclipse/suota_flash.py --help`.
 
 Or upload `output.bin` with the Dialog [SUOTA app](https://play.google.com/store/apps/details?id=com.dialog.suota), using the settings in `docs/OTA_Settings_for_apk.jpg`.
