@@ -91,6 +91,7 @@ accel_sensitivity_t sens;
 
 static timer_hnd main_timer_hnd = EASY_TIMER_INVALID_TIMER; 
 static timer_hnd button_hold_timer_hnd = EASY_TIMER_INVALID_TIMER;
+static timer_hnd fluid_timer_hnd = EASY_TIMER_INVALID_TIMER;
 
 typedef enum {
     DEFAULT,
@@ -258,7 +259,7 @@ static void timer_cb(void)
                         // which is not safe from an interrupt
                     }
                     // The fluid simulation is too heavy for this 1.5 ms interrupt (it
-                    // starved BLE and the watchdog): main_timer_cb() updates LED_Buffer
+                    // starved BLE and the watchdog): fluid_timer_cb() updates LED_Buffer
                     if (user_state != FLUID_MODE) {
                         memset(LED_Buffer,0x00,sizeof(LED_Buffer));
                         refreshMenu();
@@ -274,6 +275,10 @@ void start_main_timer(void);
 static void read_and_notify_accel(void) {
     accel_data_t data;
     if (!accel_cmd_readaccel(&data)) {
+        // the I2C setup was lost (e.g. peripherals powered down by sleep):
+        // re-initialize, the next tick will read again
+        accel_init();
+        accel_config();
         return;
     }
     // cache converted-to-mg values for display (avoid I2C from ISR)
@@ -389,7 +394,7 @@ static void main_timer_cb(void) {
         if (!accel_streaming) {
             read_and_notify_accel(); // still needed for the fluid display
         }
-        refreshMenu(); // fluid step + LED_Buffer update, out of the LED interrupt
+        // the fluid itself is stepped by fluid_timer_cb() (100 Hz)
 
         user_run = true;
     } else if (user_state == BATT_MODE) {
@@ -525,6 +530,18 @@ void user_app_on_init(void)
      fluid_5x25_init(&g_fluid);
 }
 
+// Fluid simulation step, every 10 ms (the shortest easy timer). The fluid speed
+// is set by the step rate: it originally ran after each LED frame (6 lines x
+// 1.5 ms = 9 ms, ~111 Hz) and at 10 Hz (main timer) it was ~11x too slow.
+// Running it here (main loop, not an interrupt) keeps it from starving BLE.
+static void fluid_timer_cb(void)
+{
+    if (!suota_active && user_state == FLUID_MODE && LED_Display_state) {
+        refreshMenu(); // fluid step + LED_Buffer update
+    }
+    fluid_timer_hnd = app_easy_timer(1, fluid_timer_cb); // 10 ms
+}
+
 static void fluid_start_cb(void)
 {
     // The fluid simulation is always displayed (it also keeps the system
@@ -538,8 +555,15 @@ static void fluid_start_cb(void)
 
     user_state = FLUID_MODE;
     user_run = true;
-    has_timer_started = true;
-    start_main_timer();
+    // the main timer may already run if a client subscribed to accel during
+    // the first 5 s (user_accel_streaming): don't start a second chain
+    if (!has_timer_started) {
+        has_timer_started = true;
+        start_main_timer();
+    }
+    if (fluid_timer_hnd == EASY_TIMER_INVALID_TIMER) {
+        fluid_timer_hnd = app_easy_timer(1, fluid_timer_cb);
+    }
 }
 
 void user_app_on_db_init_complete(void)

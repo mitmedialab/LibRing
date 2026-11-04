@@ -119,6 +119,13 @@ void fluid_5x25_step(fluid_5x25_t *f, float left_0_1, float down_0_1)
     if (mx > 0.45f) mx = 0.45f;
     if (my > 0.45f) my = 0.45f;
 
+    // The Cortex-M0 has no FPU: convert the step parameters once to fixed point
+    // (Q16) and integer directions, so the per-cell loop below has no soft-float.
+    const uint32_t mx_q16 = (uint32_t)(mx * 65536.0f);
+    const uint32_t my_q16 = (uint32_t)(my * 65536.0f);
+    const int dir_x = (fx > 0.0f) ? 1 : ((fx < 0.0f) ? -1 : 0);
+    const int dir_y = (fy > 0.0f) ? 1 : ((fy < 0.0f) ? -1 : 0);
+
     // Integer transport: compute outgoing amounts to up to 2 neighbors (x and y),
     // then keep the remainder. If a move would go out of bounds, it is kept.
     uint8_t next[FLUID_5X25_W][FLUID_5X25_H];
@@ -130,8 +137,8 @@ void fluid_5x25_step(fluid_5x25_t *f, float left_0_1, float down_0_1)
             if (m == 0) continue;
 
             // Compute desired outflow (integer) along x and y.
-            uint16_t outx = (uint16_t)((float)m * mx);
-            uint16_t outy = (uint16_t)((float)m * my);
+            uint16_t outx = (uint16_t)(((uint32_t)m * mx_q16) >> 16);
+            uint16_t outy = (uint16_t)(((uint32_t)m * my_q16) >> 16);
             if (outx + outy > m) {
                 // scale down proportionally
                 uint16_t tot = outx + outy;
@@ -149,8 +156,7 @@ void fluid_5x25_step(fluid_5x25_t *f, float left_0_1, float down_0_1)
             // X move
             int nx = x;
             if (outx) {
-                if (fx > 0.0f) nx = x + 1;
-                else if (fx < 0.0f) nx = x - 1;
+                nx = x + dir_x;
             }
             if (nx < 0 || nx >= FLUID_5X25_W) {
                 keep += outx;
@@ -160,8 +166,7 @@ void fluid_5x25_step(fluid_5x25_t *f, float left_0_1, float down_0_1)
             // Y move
             int ny = y;
             if (outy) {
-                if (fy > 0.0f) ny = y + 1;
-                else if (fy < 0.0f) ny = y - 1;
+                ny = y + dir_y;
             }
             if (ny < 0 || ny >= FLUID_5X25_H) {
                 keep += outy;
