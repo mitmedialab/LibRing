@@ -13,6 +13,15 @@ Requires: pip install bleak
 Rings running the stock firmware advertise their product ID (manufacturer data containing
 0001XXXX) and reject an image built for another ID, so those rings are skipped.
 
+Each ring keeps its BLE address: the default address compiled in the firmware is replaced
+in the image by the address the ring advertises (its factory address for a stock ring).
+--set-address gives one ring a specific address instead.
+
+--save writes the per-ring images (output_<ADDRESS>.bin, next to the input image)
+instead of flashing, e.g. for the Android SUOTA app:
+  suota_flash.py output.bin --save --all                        every ring in range
+  suota_flash.py output.bin --save --set-address 02:05:5E:94:54:36   no scan needed
+
 If connections keep dropping, raising Linux's default BLE supervision timeout (420 ms)
 may help (units of 10 ms), then restart Bluetooth:
   sudo sed -i 's/^#ConnectionSupervisionTimeout=$/ConnectionSupervisionTimeout=400/' /etc/bluetooth/main.conf
@@ -20,9 +29,12 @@ may help (units of 10 ms), then restart Bluetooth:
 """
 import argparse
 import asyncio
+import os
+import re
 import struct
 import sys
 import time
+import zlib
 
 from bleak import BleakClient, BleakScanner
 
@@ -52,6 +64,33 @@ STATUS = {
 
 class SuotaError(RuntimeError):
     """The ring refused the image: retrying won't help."""
+
+
+# Default BLE address compiled in the firmware (CFG_NVDS_TAG_BD_ADDRESS, little endian:
+# 48:23:35:F4:00:10). The build has 2 copies of it, both from that define: patching them
+# gives the same image as compiling with another address.
+DEFAULT_BD_ADDR = bytes([0x10, 0x00, 0xF4, 0x35, 0x23, 0x48])
+DEFAULT_BD_ADDR_COPIES = 2
+
+
+def with_bd_address(image, address):
+    """Image with the default BLE address replaced by address ("AA:BB:CC:DD:EE:FF")."""
+    if not re.fullmatch(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", address):
+        raise ValueError(f"not a BLE address: {address}")
+    new = bytes.fromhex(address.replace(":", ""))[::-1]
+    code_size = struct.unpack_from("<I", image, 33)[0]
+    code = image[64:64 + code_size]
+    if code.count(DEFAULT_BD_ADDR) != DEFAULT_BD_ADDR_COPIES:
+        raise ValueError(f"expected {DEFAULT_BD_ADDR_COPIES} copies of the default address "
+                         f"in the image, found {code.count(DEFAULT_BD_ADDR)}")
+    code = code.replace(DEFAULT_BD_ADDR, new)
+    out = bytearray(image[:64] + code + image[64 + code_size:])
+    struct.pack_into("<I", out, 8, zlib.crc32(code) & 0xFFFFFFFF)  # header CRC32
+    xor = 0
+    for b in out[:-1]:
+        xor ^= b
+    out[-1] = xor
+    return bytes(out)
 
 
 def advertised_product_id(adv):
@@ -171,6 +210,10 @@ async def main():
     parser.add_argument("--product-id", type=lambda x: int(x, 16), help="only stock rings advertising this ID (hex)")
     parser.add_argument("--all", action="store_true", help="flash every matching ring instead of the nearest one")
     parser.add_argument("--force", action="store_true", help="flash even if the advertised product ID differs")
+    parser.add_argument("--set-address", help="BLE address to give the ring (one ring only), "
+                        "instead of keeping the address it advertises")
+    parser.add_argument("--save", action="store_true",
+                        help="write output_<ADDRESS>.bin per ring instead of flashing")
     parser.add_argument("--scan-time", type=float, default=5.0, help="scan duration in seconds (default: 5)")
     parser.add_argument("--retries", type=int, default=5,
                         help="attempts per ring on connection problems (default: 5)")
@@ -188,6 +231,16 @@ async def main():
             sys.exit(f"{args.image}: not an OTA image (run make_bin_ota.py)")
         image_pid = struct.unpack_from("<H", image, 39)[0]
 
+    def save(address):
+        path = os.path.join(os.path.dirname(args.image), f"output_{address.replace(':', '')}.bin")
+        with open(path, "wb") as f:
+            f.write(with_bd_address(image, address))
+        print(f"  saved {path} (BLE address {address})")
+
+    if args.save and args.set_address:
+        save(args.set_address.upper())  # no ring needed
+        return
+
     print(f"Scanning for {args.scan_time:g} s...")
     rings = await scan(args)
     if not rings:
@@ -197,6 +250,8 @@ async def main():
         return
 
     targets = rings if args.all else rings[:1]
+    if args.set_address and len(targets) > 1:
+        sys.exit("--set-address needs a single ring (don't use it with --all)")
     failed = []
     for n, (rssi, dev, name, pid) in enumerate(targets, 1):
         print(f"\n[{n}/{len(targets)}] {dev.address} {name} (rssi {rssi})")
@@ -205,11 +260,23 @@ async def main():
                   f" (rebuild with: make PRODUCT_ID={pid:02X})")
             failed.append(dev.address)
             continue
+        # Keep the ring's BLE address (or set the requested one)
+        address = (args.set_address or dev.address).upper()
+        try:
+            ring_image = with_bd_address(image, address)
+        except ValueError as e:
+            print(f"  skipped: {e}")
+            failed.append(dev.address)
+            continue
+        if args.save:
+            save(address)
+            continue
+        print(f"  BLE address after flashing: {address}")
         # Connections often drop (see the supervision timeout above): retry, the
         # transfer restarts from the beginning.
         for attempt in range(1, args.retries + 1):
             try:
-                await flash(dev, image, args, stock_firmware=pid is not None)
+                await flash(dev, ring_image, args, stock_firmware=pid is not None)
                 print("  done, the ring is rebooting")
                 break
             except SuotaError as e:

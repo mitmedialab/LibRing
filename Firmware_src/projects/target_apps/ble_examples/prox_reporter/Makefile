@@ -130,7 +130,7 @@ AS_OBJS := $(addprefix $(OUTDIR)/obj/,$(notdir $(ASM_SRCS:.S=.o)))
 OBJS    := $(C_OBJS) $(AS_OBJS)
 
 # ── Top-level targets ─────────────────────────────────────────────────────────
-.PHONY: all clean ldscript output.bin flash scan
+.PHONY: all clean ldscript output.bin flash scan images
 
 all: $(LDSCRIPT) $(OUTDIR)/$(TARGET).elf $(OUTDIR)/$(TARGET).bin output.bin
 	$(SIZE) $(OUTDIR)/$(TARGET).elf
@@ -157,6 +157,11 @@ flash: output.bin
 
 scan:
 	python3 Eclipse/suota_flash.py --scan $(FLASH_ARGS)
+
+# One image per ring in range, keeping its BLE address: output_<ADDRESS>.bin (for the
+# Android SUOTA app). Without a ring: make images FLASH_ARGS="--set-address AA:BB:..."
+images: output.bin
+	python3 Eclipse/suota_flash.py output.bin --save --all $(FLASH_ARGS)
 
 # ── Linker script generation ──────────────────────────────────────────────────
 # Replicates the Eclipse pre-build step from makefile.targets.
