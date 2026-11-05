@@ -4,7 +4,8 @@ const fs = require('fs');
 // Noble uses UUIDs without hyphens, in lowercase
 const SVC_UUID = '00112233445566778899aabbccddeeff';
 const BATT_UUID = 'e15175c380060d8a704808c0353e678a';
-const TARGET_NAMES = ['LibRing', 'TEST']; // TEST: rings flashed before the rename
+// LibRing_XX (XX: ring ID), or LibRing / TEST from older firmware
+const isRing = (name) => !!name && (name.startsWith('LibRing') || name === 'TEST');
 
 console.log('Please wait, initializing Bluetooth...');
 
@@ -23,7 +24,7 @@ noble.on('discover', async (peripheral) => {
     const name = peripheral.advertisement.localName;
     console.log(name);
 
-    if (TARGET_NAMES.includes(name)) {
+    if (isRing(name)) {
         console.log(`Found device with name '${name}' (${peripheral.address}), connecting...`);
         await noble.stopScanningAsync();
 

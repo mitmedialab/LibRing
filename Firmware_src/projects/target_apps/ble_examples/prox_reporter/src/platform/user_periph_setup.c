@@ -179,6 +179,9 @@ void periph_init(void)
     // Enable the pads
     GPIO_set_pad_latch_en(true);
 
+    // Once at boot, before the BLE stack starts (needs the SPI flash and the pads)
+    user_bd_address_init();
+
     app_button_enable();
     start_refresh_timer();
 }

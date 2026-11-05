@@ -38,6 +38,8 @@
 #include "battery.h"
 
 #include "adc.h"
+#include "nvds.h"
+#include "co_math.h"
 
 
 #if defined(__IS_SDK6_COMPILER_GCC__) && !defined(__clang__)
@@ -518,10 +520,110 @@ static void app_resume_system_from_sleep(void)
     }
 }
 
+// BLE device name, "LibRing_" + the ring ID (see ring_id())
+char user_device_name[] = USER_DEVICE_NAME_PREFIX "00";
+
+// BLE address read from the OTP by the SDK (arch_system.c), blank on these rings.
+// When not null, the BLE stack uses it instead of the address in the image (nvds.c).
+extern struct bd_addr dev_bdaddr;
+
+// The default BLE address (CFG_NVDS_TAG_BD_ADDRESS), byte-reversed: suota_flash.py
+// replaces the copies of it in the normal byte order with each ring's own address.
+static const uint8_t default_bd_addr_reversed[NVDS_LEN_BD_ADDRESS] =
+    {0x48, 0x23, 0x35, 0xF4, 0x00, 0x10}; // keep in sync with CFG_NVDS_TAG_BD_ADDRESS
+
+// The BLE address the stack uses (in little endian): from the OTP, else from the image
+static bool get_bd_address(uint8_t addr[NVDS_LEN_BD_ADDRESS])
+{
+    nvds_tag_len_t len = NVDS_LEN_BD_ADDRESS;
+    return nvds_get_func(NVDS_TAG_BD_ADDRESS, &len, addr) == NVDS_OK
+        && len == NVDS_LEN_BD_ADDRESS;
+}
+
+static bool is_default_bd_address(const uint8_t addr[NVDS_LEN_BD_ADDRESS])
+{
+    for (int i = 0; i < NVDS_LEN_BD_ADDRESS; i++) {
+        if (addr[i] != default_bd_addr_reversed[NVDS_LEN_BD_ADDRESS - 1 - i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Unique ID of the SPI flash chip (Read Unique ID, 0x4B), programmed in the factory:
+// the DA14585 itself has no unique ID. Chips without it return a constant byte (00/FF).
+static bool read_flash_unique_id(uint64_t *uid)
+{
+    spi_flash_release_from_power_down();
+    arch_asm_delay_us(50); // wake-up time (tRES1)
+    int8_t status = spi_flash_read_unique_id(uid);
+    spi_flash_power_down(); // as after a SUOTA update, which wakes it up again
+    return status == SPI_FLASH_ERR_OK && *uid != (*uid & 0xFF) * 0x0101010101010101ULL;
+}
+
+// Rings flashed with the same image share its default BLE address, which confuses
+// the hosts (they merge them into one device). Unless the ring has its own address
+// (from the OTP, or written in the image by suota_flash.py), replace the last 3 bytes
+// of the default one (48:23:35:F4:00:10) with 24 bits of the flash unique ID: a
+// stable address per ring, 48:23:35:XX:YY:ZZ. Without a flash unique ID, the default
+// address is kept (only the name differs, see ring_id()).
+// Called by periph_init(), at boot before the BLE stack reads the address, but also
+// at each wake-up: only the first call does something.
+void user_bd_address_init(void)
+{
+    static bool done = false;
+    if (done) {
+        return;
+    }
+    done = true;
+
+    uint8_t addr[NVDS_LEN_BD_ADDRESS];
+    uint64_t uid;
+    if (!get_bd_address(addr) || !is_default_bd_address(addr) || !read_flash_unique_id(&uid)) {
+        return;
+    }
+    uint32_t id = (uint32_t)(uid ^ (uid >> 24) ^ (uid >> 48)) & 0xFFFFFF;
+    if (id == 0xF40010) {
+        id ^= 1; // not the default address
+    }
+    addr[0] = id & 0xFF; // little endian: addr[0] is the last byte displayed
+    addr[1] = (id >> 8) & 0xFF;
+    addr[2] = (id >> 16) & 0xFF;
+    memcpy(dev_bdaddr.addr, addr, NVDS_LEN_BD_ADDRESS);
+}
+
+// 8-bit ID of this ring, used in its name: the last byte of its BLE address (as
+// displayed: AA:BB:CC:DD:EE:FF -> FF), unless it still has the default address
+// (no address of its own and no flash unique ID, see user_bd_address_init()): then a
+// random value (seeded by the TRNG at boot), which changes at each reboot.
+// Only 256 values: 2 rings can have the same name, their addresses still differ.
+static uint8_t ring_id(void)
+{
+    uint8_t addr[NVDS_LEN_BD_ADDRESS];
+    if (get_bd_address(addr) && !is_default_bd_address(addr)) {
+        return addr[0]; // little endian: addr[0] is the last byte displayed
+    }
+    return co_rand_byte();
+}
+
+static void user_device_name_init(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    uint8_t id = ring_id();
+    char *digits = &user_device_name[sizeof(USER_DEVICE_NAME_PREFIX) - 1];
+    digits[0] = hex[id >> 4];
+    digits[1] = hex[id & 0xF];
+    // app_init() already copied the name for the GAP Device Name characteristic
+    memcpy(device_info.dev_name.name, user_device_name, USER_DEVICE_NAME_LEN);
+    device_info.dev_name.length = USER_DEVICE_NAME_LEN;
+    arch_printf("Device name: %s\r\n", user_device_name);
+}
+
 void user_app_on_init(void)
 {
 
      default_app_on_init();
+     user_device_name_init(); // before advertising, which puts the name in the adv. data
      //  start_main_timer();
      arch_printf("Booted now\r\n");
      LED_GPIO_mode(0);

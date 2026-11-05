@@ -205,11 +205,14 @@ static const struct advertise_configuration user_adv_conf = {
  *
  ****************************************************************************************
  */
-/// Device name
-#define USER_DEVICE_NAME        "LibRing"
+/// Device name: "LibRing_XX", XX = 2 hex digits identifying the ring, filled at
+/// boot by user_app_on_init() (user_proxr.c). The web apps match the "LibRing" prefix.
+#define USER_DEVICE_NAME_PREFIX "LibRing_"
+extern char user_device_name[];
+#define USER_DEVICE_NAME        user_device_name
 
-/// Device name length
-#define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)
+/// Device name length (fixed: the ID always has 2 digits)
+#define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME_PREFIX "XX")-1)
 
 /*
  ****************************************************************************************
