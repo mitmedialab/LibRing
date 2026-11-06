@@ -20,7 +20,14 @@ static led_gpios theLedGpiosHigh[] = {
         {GPIO_PORT_2, GPIO_PIN_9},
 };
 
-const uint8_t numbers[] = {0x77,0x24,0x5D,0x6D,0x2E,0x6B,0x7B,0x25,0x7F,0x6F,0x3F,0x3A,0x53,0x7C,0x5B,0x1B};
+// 7-segment patterns of 0-9 and A-F (b, d lowercase). Segment bits:
+// bit0=A (top), bit1=F (top left), bit2=B (top right), bit3=G (middle),
+// bit4=E (bottom left), bit5=C (bottom right), bit6=D (bottom)
+const uint8_t numbers[] = {0x77,0x24,0x5D,0x6D,0x2E,0x6B,0x7B,0x25,0x7F,0x6F,0x3F,0x7A,0x53,0x7C,0x5B,0x1B};
+
+uint8_t LED_hex_digit(uint8_t value) {
+    return numbers[value & 0xF];
+}
 
 void LED_Pin_Config(bool enable) {
     if (enable) {

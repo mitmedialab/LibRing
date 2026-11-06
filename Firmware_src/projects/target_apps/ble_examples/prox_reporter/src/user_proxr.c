@@ -123,25 +123,85 @@ static bool accel_streaming = false;
 // accelerometer are paused so that nothing can slow down or break the update
 static bool suota_active = false;
 
-static void button_hold_timer_cb(void)
+// What the display shows, changed by a long press (button held 3 s):
+// fluid -> ring ID -> off -> fluid...
+typedef enum {
+    DISPLAY_FLUID,   // fluid simulation (at boot)
+    DISPLAY_RING_ID, // the 2 hex digits of the ring name (LibRing_XX)
+    DISPLAY_OFF,     // LEDs off, everything else runs (BLE, accelerometer)
+} display_mode_t;
+static display_mode_t display_mode = DISPLAY_FLUID;
+
+// true once fluid_start_cb() has run: the display stays off during the first 5 s
+static bool display_started = false;
+
+// true while DISPLAY_OFF keeps the system awake (see display_next_mode())
+static bool display_off_keeps_awake = false;
+
+// Ring ID shown by DISPLAY_RING_ID, the same as in the BLE name (see ring_id())
+static uint8_t g_ring_id = 0;
+
+#define LONG_PRESS_TIME  300 // 3 s (10 ms units): change the display mode
+#define RESET_PRESS_TIME 700 // 7 s more (10 s in total): reset the ring
+
+// Display on, unless off by choice or paused (boot delay, firmware update)
+static bool display_wanted(void)
+{
+    return display_started && !suota_active && display_mode != DISPLAY_OFF;
+}
+
+// The 2 hex digits on the 2 rightmost digits (LED_Buffer[0] is the leftmost)
+static void show_ring_id(void)
+{
+    memset(LED_Buffer, 0x00, sizeof(LED_Buffer));
+    LED_Buffer[3] = LED_hex_digit(g_ring_id >> 4);
+    LED_Buffer[4] = LED_hex_digit(g_ring_id);
+}
+
+static void display_next_mode(void)
+{
+    switch (display_mode) {
+    case DISPLAY_FLUID:
+        display_mode = DISPLAY_RING_ID;
+        show_ring_id(); // fluid_timer_cb() stops updating LED_Buffer
+        break;
+    case DISPLAY_RING_ID:
+        display_mode = DISPLAY_OFF;
+        // LED_GPIO_mode(0) also allows sleep, but the firmware always stays awake
+        // with the display on (sleep loses the accelerometer setup, and this is
+        // the tested setup): turn off the LEDs only
+        if (!display_off_keeps_awake) {
+            display_off_keeps_awake = true;
+            arch_force_active_mode();
+        }
+        LED_GPIO_mode(0);
+        break;
+    default: // DISPLAY_OFF
+        display_mode = DISPLAY_FLUID;
+        if (display_wanted()) {
+            LED_GPIO_mode(1);
+        }
+        if (display_off_keeps_awake) {
+            display_off_keeps_awake = false;
+            arch_restore_sleep_mode();
+        }
+        break;
+    }
+    arch_printf("Display mode: %d\r\n", display_mode);
+}
+
+// Button held RESET_PRESS_TIME after the long press: reset the ring
+static void button_reset_timer_cb(void)
 {
     button_hold_timer_hnd = EASY_TIMER_INVALID_TIMER;
+    platform_reset(RESET_NO_ERROR);
+}
 
-    // if (!GPIO_GetPinStatus(GPIO_BUTTON_PORT, GPIO_BUTTON_PIN))
-    // {
-    //     arch_printf("Button held for 5s, restarting\r\n");
-
-
-        // #if (BLE_CUSTOM1_SERVER)
-        //     // if (btn_send_enabled) {
-        //     update_btn_data(5); 
-        //     notify_btn_data(5);
-        //     // }
-        // #endif 
-        platform_reset(RESET_NO_ERROR);
-        // arch_force_active_mode();
-        // NVIC_SystemReset();
-    // }
+// Button held LONG_PRESS_TIME: change the display mode (released before = no effect)
+static void button_hold_timer_cb(void)
+{
+    display_next_mode();
+    button_hold_timer_hnd = app_easy_timer(RESET_PRESS_TIME, button_reset_timer_cb);
 }
 
 void calcTime()
@@ -371,7 +431,9 @@ static void main_timer_cb(void) {
         user_run = false; 
     }
     else if (user_state == FLUID_MODE) {
-        LED_GPIO_mode(1);
+        if (display_wanted()) {
+            LED_GPIO_mode(1); // e.g. back on after an aborted firmware update
+        }
 
         // Expose a compact debug view of the fluid state over the accel notification:
         // x = bitmask of y=0..7 for grid x=0
@@ -610,6 +672,7 @@ static void user_device_name_init(void)
 {
     static const char hex[] = "0123456789ABCDEF";
     uint8_t id = ring_id();
+    g_ring_id = id; // shown by a long press
     char *digits = &user_device_name[sizeof(USER_DEVICE_NAME_PREFIX) - 1];
     digits[0] = hex[id >> 4];
     digits[1] = hex[id & 0xF];
@@ -638,7 +701,8 @@ void user_app_on_init(void)
 // Running it here (main loop, not an interrupt) keeps it from starving BLE.
 static void fluid_timer_cb(void)
 {
-    if (!suota_active && user_state == FLUID_MODE && LED_Display_state) {
+    if (!suota_active && user_state == FLUID_MODE && LED_Display_state
+            && display_mode == DISPLAY_FLUID) {
         refreshMenu(); // fluid step + LED_Buffer update
     }
     fluid_timer_hnd = app_easy_timer(1, fluid_timer_cb); // 10 ms
@@ -646,16 +710,20 @@ static void fluid_timer_cb(void)
 
 static void fluid_start_cb(void)
 {
-    // The fluid simulation is always displayed (it also keeps the system
-    // awake, so the accelerometer I2C bus stays powered)
-    if (!suota_active) {
+    // Before the display is on: in other states, the timer0 interrupt overwrites
+    // LED_Buffer (it may hold the ring ID after a long press during the first 5 s)
+    user_state = FLUID_MODE;
+
+    // The display (fluid simulation unless changed by a long press) also keeps
+    // the system awake, so the accelerometer I2C bus stays powered
+    display_started = true;
+    if (display_wanted()) {
         LED_GPIO_mode(1);
     }
     accel_init();
     accel_config();
     sens = SENS_16G;
 
-    user_state = FLUID_MODE;
     user_run = true;
     // the main timer may already run if a client subscribed to accel during
     // the first 5 s (user_accel_streaming): don't start a second chain
@@ -708,13 +776,14 @@ static void app_button_press_cb(void)
     //     app_easy_timer_cancel(button_hold_timer_hnd);
     // }
     // rising edge
+    // Pressed: long press after 3 s (display mode), reset after 10 s.
+    // Released: cancel whichever is pending. Taps do nothing.
     if (pin_val && button_hold_timer_hnd == EASY_TIMER_INVALID_TIMER) {
-        button_hold_timer_hnd = app_easy_timer(500, button_hold_timer_cb); // 5 seconds
+        button_hold_timer_hnd = app_easy_timer(LONG_PRESS_TIME, button_hold_timer_cb);
     } else if (!pin_val && button_hold_timer_hnd != EASY_TIMER_INVALID_TIMER) {
         app_easy_timer_cancel(button_hold_timer_hnd);
         button_hold_timer_hnd = EASY_TIMER_INVALID_TIMER;
     }
-    // Taps no longer change the state: the fluid display is always on.
 }
 
 void app_button_enable(void)
