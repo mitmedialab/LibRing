@@ -85,7 +85,7 @@
 // src/ppg/hx3605.h), writes of register accesses (user_ppg_config() in user_proxr.c)
 #define DEF_SVC1_PPG_UUID_128       {0x2D, 0x56, 0x5D, 0xB0, 0xBF, 0xE0, 0x2C, 0x91, 0xB6, 0x44, 0xB6, 0xB8, 0x18, 0x07, 0xDA, 0xE7}
 
-#define DEF_SVC1_PPG_CHAR_LEN       51 // PPG_PACKET_MAX
+#define DEF_SVC1_PPG_CHAR_LEN       61 // PPG_PACKET_MAX
 
 #define DEF_SVC1_PPG_USER_DESC      "PPG Data"
 

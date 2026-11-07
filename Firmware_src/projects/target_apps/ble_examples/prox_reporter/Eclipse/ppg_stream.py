@@ -20,6 +20,7 @@ import time
 from bleak import BleakClient, BleakScanner
 
 PPG_CHAR = "e7da0718-b8b6-44b6-912c-e0bfb05d562d"
+HEADER = 13  # ppg_read() in src/ppg/hx3605.h
 FS = 25.0  # Hz (ppg_start())
 
 
@@ -38,7 +39,7 @@ def fifo_sample(b, i):
 
 def decode(data):
     seq, n, count = data[0], data[1], data[2]
-    samples = [fifo_sample(data, 3 + 3 * k) for k in range(n)]
+    samples = [fifo_sample(data, HEADER + 3 * k) for k in range(n)]
     return seq, count, samples
 
 
@@ -84,8 +85,8 @@ async def main():
         nonlocal t0
         now = time.monotonic()
         t0 = t0 or now
-        if data[0] == 0xFE and len(data) >= 3 and len(data) == 3 + data[2]:
-            return  # register read result (characteristic value), not a packet
+        if len(data) < HEADER or len(data) != HEADER + 3 * data[1]:
+            return  # register/GPIO read result (characteristic value), not a packet
         seq, count, samples = decode(bytes(data))
         packets.append((now - t0, seq, count, samples))
         fifo.extend(samples)

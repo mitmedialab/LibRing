@@ -31,20 +31,42 @@ bool hx3605_write_reg(uint8_t reg, uint8_t value);
 #define HX3605_REG_FIFO_DATA  0x41 // 3 bytes per sample
 #define HX3605_FIFO_DEPTH     64
 
-// Wakes the chip, checks its ID (0x27) and starts the stock heart-rate setup.
-// Returns false if the chip doesn't answer.
+// Wakes the chip, checks its ID (0x27), starts the stock heart-rate setup and the
+// automatic gain control with the green LED. Returns false if the chip doesn't answer.
 bool ppg_start(void);
+
+// LED of phase 2 (the FIFO LED channel): PPG_LED_GREEN/IR/RED (LED driver select,
+// register 0x2b bits 7:4), or PPG_LED_OFF. Restarts the automatic gain control.
+#define PPG_LED_OFF   0x00
+#define PPG_LED_GREEN 0x10 // LDR0
+#define PPG_LED_IR    0x20 // LDR1
+#define PPG_LED_RED   0x40 // LDR2
+void ppg_set_led(uint8_t led);
+
+// Automatic gain control (as the vendor's hx3918_hrs_agc.c): bright LED (current up
+// to 200 = 157 mA, 128 us pulses) with the offset DACs (0x2e LED, 0x2f ambient)
+// keeping the raw LED reading in 150k-350k. Disable it to set registers by hand.
+void ppg_agc_enable(bool enable);
 
 // Stock "off" setup: sampling off, chip asleep
 void ppg_stop(void);
 
-// Notification packet, read every ~100 ms (25 Hz: ~2-3 samples):
+// Notification packet, read every ~100 ms (25 Hz: ~2-3 samples per phase):
 //   [0]      sequence number (wraps)
 //   [1]      n, number of FIFO samples in this packet
 //   [2]      FIFO count register before reading
-//   [3..]    n FIFO samples (register 0x41), 3 bytes each, raw, little endian
+//   [3]      LED current (0x28)       [4] LED offset DAC (0x2e)
+//   [5]      ambient offset DAC (0x2f)
+//   [6]      bits 3:0 AGC state (enum ppg_agc_state), bits 7:4 LED (PPG_LED_* >> 4)
+//   [7..9]   raw LED reading (phase 2, registers 0x08-0x0a), unsigned, little endian
+//   [10..12] raw ambient reading (phase 3, registers 0x0b-0x0d)
+//   [13..]   n FIFO samples (register 0x41), 3 bytes each, raw, little endian
+//            (bits 20:0 signed value, bits 22:21 phase flag)
+#define PPG_HEADER      13
 #define PPG_MAX_SAMPLES 16
-#define PPG_PACKET_MAX  (3 + 3 * PPG_MAX_SAMPLES)
+#define PPG_PACKET_MAX  (PPG_HEADER + 3 * PPG_MAX_SAMPLES)
+
+enum ppg_agc_state { PPG_AGC_OFF, PPG_AGC_START, PPG_AGC_CURRENT, PPG_AGC_OFFSET, PPG_AGC_LOCKED };
 
 // Fills packet, returns its length (0 on an I2C error)
 uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX]);

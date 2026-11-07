@@ -138,7 +138,133 @@ bool ppg_start(void)
         return false;
     }
     fifo_first_read = true;
-    return write_table(stock_hr_setup, sizeof(stock_hr_setup) / sizeof(stock_hr_setup[0]));
+    if (!write_table(stock_hr_setup, sizeof(stock_hr_setup) / sizeof(stock_hr_setup[0]))) {
+        return false;
+    }
+    ppg_set_led(PPG_LED_GREEN);
+    return true;
+}
+
+// ---- Automatic gain control (vendor hx3918_hrs_agc.c, PPG_hrs_Calibration_Routine) ----
+#define AGC_INIT_CURRENT 64     // HRS_CAL_INIT_LED
+#define AGC_MAX_CURRENT  200    // green_led_max_init
+#define AGC_IDAC_OFFSET  8      // HR_GREEN_AGC_OFFSET
+#define AGC_ON_TIME      64     // 128 us
+#define AGC_LOW          150000 // raw LED reading range
+#define AGC_HIGH         350000
+#define AGC_RECAL_LOW    100000 // out of this range for AGC_RECAL_POLLS: recalibrate
+#define AGC_RECAL_HIGH   400000
+#define AGC_RECAL_POLLS  10     // 1 s
+
+static struct {
+    bool enabled;
+    uint8_t state, led, current, led_idac, amb_idac, wait, out_count;
+} agc = {.enabled = true, .led = PPG_LED_GREEN};
+
+// Raw phase readings (vendor read_data_packet()): ps[2] LED (green), ps[3] ambient
+static int32_t raw_phase[4];
+
+static void read_phases(void)
+{
+    uint8_t b[12];
+    if (hx3605_read_regs(0x02, b, 12)) {
+        for (int i = 0; i < 4; i++) {
+            raw_phase[i] = b[3 * i] | (b[3 * i + 1] << 8) | ((int32_t)b[3 * i + 2] << 16);
+        }
+    }
+}
+
+static void agc_apply(void)
+{
+    hx3605_write_reg(0x28, agc.current);
+    hx3605_write_reg(0x2e, agc.led_idac);
+    hx3605_write_reg(0x2f, agc.amb_idac);
+}
+
+void ppg_set_led(uint8_t led)
+{
+    agc.led = led;
+    if (led == PPG_LED_OFF) {
+        agc.current = 0;
+        hx3605_write_reg(0x28, 0);
+        agc.state = PPG_AGC_OFF;
+        return;
+    }
+    hx3605_write_reg(0x2b, led); // phase 2 LED driver (phase 3: none = ambient)
+    agc.state = agc.enabled ? PPG_AGC_START : PPG_AGC_OFF;
+    if (!agc.enabled) {
+        hx3605_write_reg(0x28, agc.current);
+    }
+}
+
+void ppg_agc_enable(bool enable)
+{
+    agc.enabled = enable;
+    if (!enable) {
+        agc.state = PPG_AGC_OFF;
+        // keep the current settings, let the client change them
+        hx3605_read_regs(0x28, &agc.current, 1);
+    } else if (agc.led != PPG_LED_OFF) {
+        agc.state = PPG_AGC_START;
+    }
+}
+
+// One step every 200 ms (2 polls: 5 samples at 25 Hz settle after a change)
+static void agc_step(void)
+{
+    if (agc.wait) {
+        agc.wait--;
+        return;
+    }
+    int32_t led = raw_phase[2], amb = raw_phase[3];
+    switch (agc.state) {
+    case PPG_AGC_START:
+        agc.current = AGC_INIT_CURRENT;
+        agc.led_idac = 0;
+        agc.amb_idac = 0;
+        hx3605_write_reg(0x1e, AGC_ON_TIME);
+        hx3605_write_reg(0x1f, AGC_ON_TIME);
+        agc_apply();
+        agc.state = PPG_AGC_CURRENT;
+        break;
+    case PPG_AGC_CURRENT:
+        agc.amb_idac = amb > 280000 ? (amb - 280000) / 10000 : 0;
+        if (led > amb + 128) {
+            int32_t step = (led - amb) / AGC_INIT_CURRENT; // counts per current unit
+            int32_t current = 5000 * (AGC_IDAC_OFFSET + agc.amb_idac) / (step ? step : 1);
+            agc.current = current > AGC_MAX_CURRENT ? AGC_MAX_CURRENT : (current < 1 ? 1 : current);
+        } else {
+            agc.current = AGC_MAX_CURRENT;
+        }
+        agc.led_idac = AGC_IDAC_OFFSET >> 1;
+        agc_apply();
+        agc.state = PPG_AGC_OFFSET;
+        break;
+    case PPG_AGC_OFFSET:
+        if (led > AGC_HIGH && agc.led_idac <= 120) {
+            agc.led_idac++;
+        } else if (led < AGC_LOW && agc.led_idac >= 1) {
+            agc.led_idac--;
+        } else {
+            agc.state = PPG_AGC_LOCKED;
+            agc.out_count = 0;
+            break;
+        }
+        hx3605_write_reg(0x2e, agc.led_idac);
+        break;
+    case PPG_AGC_LOCKED:
+        if (led < AGC_RECAL_LOW || led > AGC_RECAL_HIGH) {
+            if (++agc.out_count >= AGC_RECAL_POLLS / 2) {
+                agc.state = PPG_AGC_START;
+            }
+        } else {
+            agc.out_count = 0;
+        }
+        return; // no wait when locked
+    default:
+        return;
+    }
+    agc.wait = 1;
 }
 
 void ppg_stop(void)
@@ -167,7 +293,7 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
         if (n > PPG_MAX_SAMPLES) {
             n = PPG_MAX_SAMPLES;
         }
-        if (!hx3605_read_regs(HX3605_REG_FIFO_DATA, &packet[3], 3 * n)) {
+        if (!hx3605_read_regs(HX3605_REG_FIFO_DATA, &packet[PPG_HEADER], 3 * n)) {
             n = 0;
         }
     }
@@ -180,10 +306,22 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
         hx3605_write_reg(HX3605_REG_FIFO_CTRL, ctrl);
         fifo_first_read = true;
     }
+    read_phases();
+    if (agc.enabled) {
+        agc_step();
+    }
     packet[0] = seq++;
     packet[1] = n;
     packet[2] = count;
-    return 3 + 3 * n;
+    packet[3] = agc.current;
+    packet[4] = agc.led_idac;
+    packet[5] = agc.amb_idac;
+    packet[6] = agc.state | (agc.led & 0xF0);
+    for (int i = 0; i < 3; i++) {
+        packet[7 + i] = raw_phase[2] >> (8 * i);
+        packet[10 + i] = raw_phase[3] >> (8 * i);
+    }
+    return PPG_HEADER + 3 * n;
 }
 
 // ---- Probe ----

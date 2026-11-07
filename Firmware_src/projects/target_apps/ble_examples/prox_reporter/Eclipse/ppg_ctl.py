@@ -25,6 +25,7 @@ import time
 from bleak import BleakClient, BleakScanner
 
 PPG = "e7da0718-b8b6-44b6-912c-e0bfb05d562d"
+HEADER = 13  # ppg_read() in src/ppg/hx3605.h
 
 # HX3918: phase 2 LED driver select 0x2b (bits 7:4), current 0x28 (0-255 = 0-200 mA)
 PRESETS = {
@@ -42,12 +43,13 @@ count_reg = 0
 def on_data(_, data):
     global count_reg
     d = bytes(data)
-    if len(d) < 3 or len(d) != 3 + 3 * d[1]:
+    if len(d) < HEADER or len(d) != HEADER + 3 * d[1]:
         return  # register or GPIO read result (BlueZ reports reads as notifications too)
     count_reg = d[2]
     now = time.monotonic()
     for k in range(d[1]):
-        raw = d[3 + 3 * k] | d[4 + 3 * k] << 8 | d[5 + 3 * k] << 16
+        i = HEADER + 3 * k
+        raw = d[i] | d[i + 1] << 8 | d[i + 2] << 16
         v = raw & 0x1FFFFF
         if v & 0x100000:
             v -= 0x200000

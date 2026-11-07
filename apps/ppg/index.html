@@ -95,9 +95,11 @@
         <option value="16">32 µs</option><option value="32" selected>64 µs</option>
         <option value="64">128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option>
       </select></label>
-      <label class="inline"><input type="checkbox" id="auto" checked> Auto brightness</label>
+      <label class="inline"><input type="checkbox" id="auto" checked> Auto (ring)</label>
     </div>
-    <p class="hint">Heart rate: green on the finger. Red and IR are for SpO2 (and IR shows only through a phone camera).</p>
+    <p class="hint" id="agcinfo"></p>
+    <p class="hint">Heart rate: green on the finger. Red and IR are for SpO2 (IR shows only through a phone camera).
+      Auto: the ring's gain control (bright LED + offset DACs); moving the brightness or pulse sets manual mode.</p>
   </div>
 
   <div class="panel" id="livepanel">
@@ -180,7 +182,10 @@ const FULL = 257700;           // LED channel ceiling (saturation)
 // HX3918 (chip ID 0x27): LED driver select of phase 2 in 0x2b bits 7:4 (LDR0 green,
 // LDR1 IR, LDR2 red on the SR08), LED current 0x28 (0-255 = 0-200 mA), on-time 0x1e
 const LEDS = {green: 0x10, red: 0x40, ir: 0x20};
-const REG_LED_SEL = 0x2b, REG_LED_CUR = 0x28, REG_ON_TIME = 0x1e;
+const REG_LED_CUR = 0x28, REG_ON_TIME = 0x1e;
+const CMD_AGC = 0xfc, CMD_LED = 0xfb;  // [0xFC, on], [0xFB, LED select]
+const HEADER = 13;                      // ppg_read() in src/ppg/hx3605.h
+const AGC_STATES = ['manual', 'starting', 'setting current', 'setting offset', 'locked'];
 
 const REGS = [
   [0x16, 'phase enable'], [0x17, 'oversampling'], [0x18, 'period [7:0]'], [0x19, 'period [15:8]'],
@@ -197,7 +202,7 @@ const css = name => getComputedStyle(document.documentElement).getPropertyValue(
 let device = null, ppg = null, busy = Promise.resolve();
 const traces = [[], []];       // [other phase, LED channel]
 let sampleCount = 0, rateT0 = 0;
-let led = 'green', current = 2, lastAuto = 0;
+let led = 'green', current = 2, agcState = null;
 
 function log(msg) {
   const el = $('log');
@@ -212,6 +217,7 @@ const ledColor = () => css(led === 'off' ? '--off' : `--${led}`);
 // GATT operations must not overlap: chain them
 function gatt(op) { busy = busy.then(op, op); return busy; }
 async function writeReg(reg, val) { await gatt(() => ppg.writeValueWithResponse(new Uint8Array([reg, val]))); }
+async function command(cmd, val) { await gatt(() => ppg.writeValueWithResponse(new Uint8Array([cmd, val]))); }
 async function readRegs(reg, n) {
   return gatt(async () => {
     await ppg.writeValueWithResponse(new Uint8Array([0xfe, reg, n]));
@@ -234,9 +240,12 @@ async function gpioTest(port, pin, mode) {
 function onPacket(event) {
   const d = new Uint8Array(event.target.value.buffer);
   // register / GPIO read results also come here (readValue fires this event)
-  if (d.length < 3 || d.length !== 3 + 3 * d[1]) return;
+  if (d.length < HEADER || d.length !== HEADER + 3 * d[1]) return;
+  const u24 = i => d[i] | (d[i + 1] << 8) | (d[i + 2] << 16);
+  agcState = {current: d[3], ledDac: d[4], ambDac: d[5], state: d[6] & 15, led: d[6] >> 4,
+              rawLed: u24(7), rawAmb: u24(10)};
   for (let k = 0; k < d[1]; k++) {
-    const raw = d[3 + 3 * k] | (d[4 + 3 * k] << 8) | (d[5 + 3 * k] << 16);
+    const raw = u24(HEADER + 3 * k);
     let v = raw & 0x1fffff;
     if (v & 0x100000) v -= 0x200000;
     const flag = (raw >> 21) & 3;
@@ -349,7 +358,13 @@ function render() {
       const recent = ac.slice(-4 * FS);
       $('pulseinfo').textContent = `amplitude ${Math.round(Math.max(...recent) - Math.min(...recent))}`;
     }
-    autoBrightness(mean, Math.max(...last));
+  }
+  if (agcState) {
+    const a = agcState;
+    $('agcinfo').textContent = `Ring: ${AGC_STATES[a.state] || a.state}, current ${a.current} ` +
+      `(${(a.current * 200 / 255).toFixed(1)} mA), LED offset ${a.ledDac}, ambient offset ${a.ambDac}, ` +
+      `raw LED ${a.rawLed}, raw ambient ${a.rawAmb}`;
+    if (a.state && current !== a.current) { current = a.current; showLed(); }
   }
   if (other.length) $('otherinfo').textContent = `${other[other.length - 1]}`;
 
@@ -361,17 +376,6 @@ function render() {
   requestAnimationFrame(render);
 }
 
-// Keep the LED channel around 25-70 % of full scale
-function autoBrightness(mean, max) {
-  if (!ppg || !$('auto').checked || led === 'off') return;
-  const now = performance.now();
-  if (now - lastAuto < 1500 || traces[1].length < FS) return;
-  lastAuto = now;
-  let c = current;
-  if (max > FULL * 0.9 || mean > FULL * 0.7) c = Math.max(1, c - (mean > FULL * 0.9 ? Math.max(1, c >> 2) : 1));
-  else if (mean < FULL * 0.25) c = Math.min(80, c + 1);
-  if (c !== current) setCurrent(c, 'auto').catch(e => log(e.message));
-}
 
 // ---- LED control ----
 function showLed() {
@@ -392,10 +396,9 @@ async function setLed(name) {
   showLed();
   if (!ppg) return;
   traces[1].length = 0;
-  if (name === 'off') { await writeReg(REG_LED_CUR, 0); log('LED off'); return; }
-  await writeReg(REG_LED_SEL, LEDS[name]);
-  await writeReg(REG_LED_CUR, current);
-  log(`LED ${name}: 0x2b = 0x${hex(LEDS[name])}, 0x28 = ${current}`);
+  await command(CMD_LED, name === 'off' ? 0 : LEDS[name]);  // restarts the ring's AGC
+  if (name !== 'off' && !$('auto').checked) await writeReg(REG_LED_CUR, current);
+  log(`LED ${name}`);
 }
 
 // ---- registers ----
@@ -439,7 +442,8 @@ async function startSensor() {
   traces[0].length = traces[1].length = 0;
   await gatt(() => ppg.startNotifications()); // subscribing starts the sensor (stock setup)
   rateT0 = performance.now(); sampleCount = 0;
-  await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
+  await command(CMD_AGC, $('auto').checked ? 1 : 0);
+  if (!$('auto').checked) await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
   await setLed(led);
 }
 async function restart() {
@@ -498,8 +502,18 @@ $('disconnect').onclick = () => device && device.gatt.disconnect();
 $('restart').onclick = restart;
 $('readall').onclick = readAll;
 document.querySelectorAll('.led-btn').forEach(b => { b.onclick = () => setLed(b.dataset.led).catch(e => log(e.message)); });
-$('current').oninput = () => { $('auto').checked = false; setCurrent(parseInt($('current').value, 10), 'manual').catch(e => log(e.message)); };
-$('ontime').onchange = () => ppg && writeReg(REG_ON_TIME, parseInt($('ontime').value, 10)).then(() => log(`on-time 0x1e = ${$('ontime').value}`));
+$('current').oninput = async () => {
+  if ($('auto').checked) { $('auto').checked = false; if (ppg) await command(CMD_AGC, 0); }
+  setCurrent(parseInt($('current').value, 10), 'manual').catch(e => log(e.message));
+};
+$('auto').onchange = () => ppg && command(CMD_AGC, $('auto').checked ? 1 : 0)
+  .then(() => log(`ring AGC ${$('auto').checked ? 'on' : 'off'}`)).catch(e => log(e.message));
+$('ontime').onchange = async () => {
+  if (!ppg) return;
+  if ($('auto').checked) { $('auto').checked = false; await command(CMD_AGC, 0); }
+  await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
+  log(`on-time 0x1e = ${$('ontime').value} (manual)`);
+};
 $('write').onclick = async () => {
   const r = parseHex($('wreg').value), v = parseHex($('wval').value);
   if (r === null || v === null) return;
