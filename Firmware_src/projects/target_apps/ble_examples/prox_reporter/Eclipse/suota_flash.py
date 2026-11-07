@@ -116,7 +116,25 @@ def looks_like_ring(dev, adv):
 
 
 async def scan(args):
-    found = await BleakScanner.discover(timeout=args.scan_time, return_adv=True)
+    found = {}
+    seen = asyncio.Event()
+
+    def on_adv(dev, adv):
+        found[dev.address] = (dev, adv)
+        if args.address and dev.address.upper() == args.address.upper():
+            seen.set()
+
+    async with BleakScanner(on_adv):
+        if args.address:
+            # stop as soon as the ring is seen (+1 s for its scan response)
+            try:
+                await asyncio.wait_for(seen.wait(), args.scan_time)
+                await asyncio.sleep(1)
+            except asyncio.TimeoutError:
+                pass
+        else:
+            await asyncio.sleep(args.scan_time)
+
     rings = []
     for dev, adv in found.values():
         name = adv.local_name or dev.name or ""
@@ -166,10 +184,20 @@ async def flash(dev, image, args, stock_firmware):
         connected_at = time.monotonic()
         await client.start_notify(SERV_STATUS, lambda _, data: status.put_nowait(data[0]))
 
-        # 20-byte writes, like the Android app: larger ones (up to 240 bytes on our
-        # firmware) are faster but the link often drops with them. The stock firmware
-        # also errors on reads of the optional SUOTA 1.3 characteristics (chunk size).
-        chunk = args.chunk or 20
+        # Our firmware: 240-byte writes and 480-byte blocks (2 writes per status
+        # notification, its buffer takes up to 512 bytes): ~5x faster than the 20-byte
+        # writes and 240-byte blocks of the Android app (45 KB: 8.7 s instead of 43 s).
+        # The stock receiver is untested with them: 20/240 there. (Its errors on reads
+        # of the optional SUOTA 1.3 characteristics prevent asking the ring.)
+        chunk = args.chunk or (20 if stock_firmware else 240)
+        block_size = args.block_size or (240 if stock_firmware else 480)
+        # A write must fit in one ATT packet. On BlueZ, bleak reports the default MTU
+        # (23) unless asked for the negotiated one (247 on our firmware).
+        try:
+            await client._backend._acquire_mtu()
+        except Exception:
+            pass
+        chunk = min(chunk, client.mtu_size - 3)
 
         await client.write_gatt_char(MEM_DEV, struct.pack("<I", (MEM_SPI_FLASH << 24) | args.bank), response=True)
         await expect(ST_IMG_STARTED, "start")
@@ -177,8 +205,8 @@ async def flash(dev, image, args, stock_firmware):
 
         start = time.monotonic()
         patch_len = None
-        for offset in range(0, len(image), args.block_size):
-            block = image[offset:offset + args.block_size]
+        for offset in range(0, len(image), block_size):
+            block = image[offset:offset + block_size]
             if len(block) != patch_len:
                 patch_len = len(block)
                 await client.write_gatt_char(PATCH_LEN, struct.pack("<H", patch_len), response=True)
@@ -188,7 +216,7 @@ async def flash(dev, image, args, stock_firmware):
             await expect(ST_CMP_OK, f"block at 0x{offset:X}", timeout=30 if offset == 0 else 10)
             done = offset + len(block)
             print(f"\r  {done * 100 // len(image):3d}%  {done}/{len(image)} bytes", end="", flush=True)
-        print(f"  ({time.monotonic() - start:.1f} s, {chunk}-byte chunks)")
+        print(f"  ({time.monotonic() - start:.1f} s, {chunk}-byte writes, {block_size}-byte blocks)")
 
         await client.write_gatt_char(MEM_DEV, struct.pack("<I", CMD_IMG_END << 24), response=True)
         try:
@@ -223,8 +251,10 @@ async def main():
     parser.add_argument("--scan-time", type=float, default=5.0, help="scan duration in seconds (default: 5)")
     parser.add_argument("--retries", type=int, default=5,
                         help="attempts per ring on connection problems (default: 5)")
-    parser.add_argument("--chunk", type=int, help="bytes per BLE write (default: 20; up to 240 on the custom firmware: faster, less reliable)")
-    parser.add_argument("--block-size", type=int, default=240, help="SUOTA block size (default: 240)")
+    parser.add_argument("--chunk", type=int,
+                        help="bytes per BLE write (default: 240 on our firmware, 20 on stock rings)")
+    parser.add_argument("--block-size", type=int,
+                        help="SUOTA block size, at most 512 (default: 480 on our firmware, 240 on stock rings)")
     parser.add_argument("--bank", type=int, choices=(0, 1, 2), default=0, help="image bank, 0 = oldest (default)")
     args = parser.parse_args()
     if not args.scan and not args.image:
@@ -247,7 +277,10 @@ async def main():
         save(args.set_address.upper())  # no ring needed
         return
 
-    print(f"Scanning for {args.scan_time:g} s...")
+    if args.address:
+        print(f"Looking for {args.address} (up to {args.scan_time:g} s)...")
+    else:
+        print(f"Scanning for {args.scan_time:g} s...")
     rings = await scan(args)
     if not rings:
         sys.exit("No matching ring found (is it advertising, i.e. not connected to another app?)")
