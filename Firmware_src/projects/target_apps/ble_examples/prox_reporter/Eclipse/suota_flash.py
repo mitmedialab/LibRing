@@ -317,6 +317,9 @@ async def main():
             print("  BLE address after flashing: derived by the firmware (48:23:35:XX:YY:ZZ)")
         else:
             print(f"  BLE address after flashing: {address}")
+        if n > 1:
+            # BlueZ forgets the devices seen in the first scan after a while
+            dev = await BleakScanner.find_device_by_address(dev.address, timeout=10) or dev
         # Connections often drop (see the supervision timeout above): retry, the
         # transfer restarts from the beginning.
         for attempt in range(1, args.retries + 1):
@@ -336,6 +339,10 @@ async def main():
                     await asyncio.sleep(2)
                     # BlueZ forgets a device after failed connections: scan for it again
                     dev = await BleakScanner.find_device_by_address(dev.address, timeout=10) or dev
+    default_address = DEFAULT_BD_ADDR[::-1].hex(":").upper()
+    if len(targets) > 1 and any(dev.address.upper() == default_address for _, dev, _, _ in targets):
+        print(f"\nRings sharing the default address {default_address} (old firmware) are "
+              "flashed one per run: run again until none is left")
     if failed:
         sys.exit(f"\n{len(failed)} ring(s) not flashed: {', '.join(failed)}")
 

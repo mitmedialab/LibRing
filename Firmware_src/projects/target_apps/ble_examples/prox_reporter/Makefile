@@ -130,7 +130,7 @@ AS_OBJS := $(addprefix $(OUTDIR)/obj/,$(notdir $(ASM_SRCS:.S=.o)))
 OBJS    := $(C_OBJS) $(AS_OBJS)
 
 # ── Top-level targets ─────────────────────────────────────────────────────────
-.PHONY: all clean ldscript output.bin flash scan images
+.PHONY: all clean ldscript output.bin flash flash_all scan images
 
 all: $(LDSCRIPT) $(OUTDIR)/$(TARGET).elf $(OUTDIR)/$(TARGET).bin output.bin
 	$(SIZE) $(OUTDIR)/$(TARGET).elf
@@ -150,10 +150,16 @@ output.bin: $(OUTDIR)/$(TARGET).bin
 
 # Flash over BLE from this computer (pip install bleak), see Eclipse/suota_flash.py --help.
 # e.g. make flash                          nearest ring
-#      make flash FLASH_ARGS="--all --min-rssi -60"
+#      make flash FLASH_ARGS="--address 48:23:35:A2:01:57"
 #      make scan
 flash: output.bin
 	python3 Eclipse/suota_flash.py output.bin $(FLASH_ARGS)
+
+# Every ring in range, one after the other. Rings on our firmware take any PRODUCT_ID
+# (only the stock receiver checks it): stock rings with another ID are skipped, flash
+# them with e.g. make flash_all PRODUCT_ID=17. Far rings: FLASH_ARGS="--min-rssi -70"
+flash_all: output.bin
+	python3 Eclipse/suota_flash.py output.bin --all $(FLASH_ARGS)
 
 scan:
 	python3 Eclipse/suota_flash.py --scan $(FLASH_ARGS)
