@@ -192,12 +192,15 @@ async def flash(dev, image, args, stock_firmware):
         chunk = args.chunk or (20 if stock_firmware else 240)
         block_size = args.block_size or (240 if stock_firmware else 480)
         # A write must fit in one ATT packet. On BlueZ, bleak reports the default MTU
-        # (23) unless asked for the negotiated one (247 on our firmware).
-        try:
-            await client._backend._acquire_mtu()
-        except Exception:
-            pass
-        chunk = min(chunk, client.mtu_size - 3)
+        # (23) unless asked for the negotiated one (247 on our firmware). Not on stock
+        # rings: they use 20-byte writes anyway, and asking breaks the connection
+        # ("GATT Protocol Error: Unlikely Error", then disconnections).
+        if chunk > 20:
+            try:
+                await client._backend._acquire_mtu()
+            except Exception:
+                pass
+            chunk = min(chunk, client.mtu_size - 3)
 
         await client.write_gatt_char(MEM_DEV, struct.pack("<I", (MEM_SPI_FLASH << 24) | args.bank), response=True)
         await expect(ST_IMG_STARTED, "start")
@@ -246,6 +249,8 @@ async def main():
     parser.add_argument("--force", action="store_true", help="flash even if the advertised product ID differs")
     parser.add_argument("--set-address", help="BLE address to give the ring (one ring only), "
                         "instead of keeping the address it advertises")
+    parser.add_argument("--raw", action="store_true",
+                        help="flash the image unchanged (e.g. a stock firmware: no BLE address to set)")
     parser.add_argument("--save", action="store_true",
                         help="write output_<ADDRESS>.bin per ring instead of flashing")
     parser.add_argument("--scan-time", type=float, default=5.0, help="scan duration in seconds (default: 5)")
@@ -305,7 +310,7 @@ async def main():
         if not args.set_address and address.startswith(DERIVED_BD_ADDR_PREFIX):
             address = DEFAULT_BD_ADDR[::-1].hex(":").upper()
         try:
-            ring_image = with_bd_address(image, address)
+            ring_image = image if args.raw else with_bd_address(image, address)
         except ValueError as e:
             print(f"  skipped: {e}")
             failed.append(dev.address)
@@ -313,7 +318,9 @@ async def main():
         if args.save:
             save(address)
             continue
-        if address.startswith(DERIVED_BD_ADDR_PREFIX):
+        if args.raw:
+            print("  image flashed unchanged (--raw)")
+        elif address.startswith(DERIVED_BD_ADDR_PREFIX):
             print("  BLE address after flashing: derived by the firmware (48:23:35:XX:YY:ZZ)")
         else:
             print(f"  BLE address after flashing: {address}")
