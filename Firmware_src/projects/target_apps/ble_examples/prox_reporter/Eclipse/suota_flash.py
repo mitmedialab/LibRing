@@ -15,7 +15,9 @@ Rings running the stock firmware advertise their product ID (manufacturer data c
 
 Each ring keeps its BLE address: the default address compiled in the firmware is replaced
 in the image by the address the ring advertises (its factory address for a stock ring).
---set-address gives one ring a specific address instead.
+Except the addresses the firmware derives from the flash unique ID (48:23:35:XX:YY:ZZ):
+the image keeps the default one, so that the firmware derives it again (and a fix of
+that derivation applies). --set-address gives one ring a specific address instead.
 
 --save writes the per-ring images (output_<ADDRESS>.bin, next to the input image)
 instead of flashing, e.g. for the Android SUOTA app:
@@ -71,6 +73,10 @@ class SuotaError(RuntimeError):
 # gives the same image as compiling with another address.
 DEFAULT_BD_ADDR = bytes([0x10, 0x00, 0xF4, 0x35, 0x23, 0x48])
 DEFAULT_BD_ADDR_COPIES = 2
+
+# Addresses derived by the firmware from the flash unique ID: 48:23:35 + 3 bytes
+# (user_bd_address_init() in src/user_proxr.c)
+DERIVED_BD_ADDR_PREFIX = "48:23:35:"
 
 
 def with_bd_address(image, address):
@@ -260,8 +266,11 @@ async def main():
                   f" (rebuild with: make PRODUCT_ID={pid:02X})")
             failed.append(dev.address)
             continue
-        # Keep the ring's BLE address (or set the requested one)
+        # Keep the ring's BLE address (or set the requested one), unless the firmware
+        # derives it: then keep the default one in the image
         address = (args.set_address or dev.address).upper()
+        if not args.set_address and address.startswith(DERIVED_BD_ADDR_PREFIX):
+            address = DEFAULT_BD_ADDR[::-1].hex(":").upper()
         try:
             ring_image = with_bd_address(image, address)
         except ValueError as e:
@@ -271,7 +280,10 @@ async def main():
         if args.save:
             save(address)
             continue
-        print(f"  BLE address after flashing: {address}")
+        if address.startswith(DERIVED_BD_ADDR_PREFIX):
+            print("  BLE address after flashing: derived by the firmware (48:23:35:XX:YY:ZZ)")
+        else:
+            print(f"  BLE address after flashing: {address}")
         # Connections often drop (see the supervision timeout above): retry, the
         # transfer restarts from the beginning.
         for attempt in range(1, args.retries + 1):

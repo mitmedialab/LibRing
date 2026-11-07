@@ -40,6 +40,7 @@
 #include "adc.h"
 #include "nvds.h"
 #include "co_math.h"
+#include "spi.h"
 
 
 #if defined(__IS_SDK6_COMPILER_GCC__) && !defined(__clang__)
@@ -612,21 +613,54 @@ static bool is_default_bd_address(const uint8_t addr[NVDS_LEN_BD_ADDRESS])
     return true;
 }
 
+#define FLASH_UID_LEN 16
+
 // Unique ID of the SPI flash chip (Read Unique ID, 0x4B), programmed in the factory:
-// the DA14585 itself has no unique ID. Chips without it return a constant byte (00/FF).
-static bool read_flash_unique_id(uint64_t *uid)
+// the DA14585 itself has no unique ID. 16 bytes are read, not the 8 of
+// spi_flash_read_unique_id(): the Puya flash of these rings has a 128-bit ID whose
+// first 8 bytes are a lot code ("BP220533" + 0x15), the same for all the rings of a
+// lot. Chips without a unique ID return a constant byte (00/FF).
+static bool read_flash_unique_id(uint8_t uid[FLASH_UID_LEN])
 {
+    bool ok = false;
     spi_flash_release_from_power_down();
     arch_asm_delay_us(50); // wake-up time (tRES1)
-    int8_t status = spi_flash_read_unique_id(uid);
+    // same sequence as spi_flash_read_unique_id()
+    if (spi_flash_is_busy() == SPI_FLASH_ERR_OK) {
+        spi_set_bitmode(SPI_MODE_8BIT);
+        spi_cs_low();
+        spi_access(SPI_FLASH_OP_RUID);
+        for (int i = 0; i < 4; i++) {
+            spi_access(0x00); // dummy bytes
+        }
+        for (int i = 0; i < FLASH_UID_LEN; i++) {
+            uid[i] = spi_access(0x00);
+        }
+        spi_cs_high();
+        for (int i = 1; i < FLASH_UID_LEN; i++) {
+            if (uid[i] != uid[0]) {
+                ok = true;
+            }
+        }
+    }
     spi_flash_power_down(); // as after a SUOTA update, which wakes it up again
-    return status == SPI_FLASH_ERR_OK && *uid != (*uid & 0xFF) * 0x0101010101010101ULL;
+    return ok;
+}
+
+// 24 bits from all the unique ID bytes (FNV-1a hash, folded)
+static uint32_t flash_unique_id_hash(const uint8_t uid[FLASH_UID_LEN])
+{
+    uint32_t h = 0x811C9DC5;
+    for (int i = 0; i < FLASH_UID_LEN; i++) {
+        h = (h ^ uid[i]) * 0x01000193;
+    }
+    return (h ^ (h >> 24)) & 0xFFFFFF;
 }
 
 // Rings flashed with the same image share its default BLE address, which confuses
 // the hosts (they merge them into one device). Unless the ring has its own address
 // (from the OTP, or written in the image by suota_flash.py), replace the last 3 bytes
-// of the default one (48:23:35:F4:00:10) with 24 bits of the flash unique ID: a
+// of the default one (48:23:35:F4:00:10) with a hash of the flash unique ID: a
 // stable address per ring, 48:23:35:XX:YY:ZZ. Without a flash unique ID, the default
 // address is kept (only the name differs, see ring_id()).
 // Called by periph_init(), at boot before the BLE stack reads the address, but also
@@ -640,11 +674,11 @@ void user_bd_address_init(void)
     done = true;
 
     uint8_t addr[NVDS_LEN_BD_ADDRESS];
-    uint64_t uid;
-    if (!get_bd_address(addr) || !is_default_bd_address(addr) || !read_flash_unique_id(&uid)) {
+    uint8_t uid[FLASH_UID_LEN];
+    if (!get_bd_address(addr) || !is_default_bd_address(addr) || !read_flash_unique_id(uid)) {
         return;
     }
-    uint32_t id = (uint32_t)(uid ^ (uid >> 24) ^ (uid >> 48)) & 0xFFFFFF;
+    uint32_t id = flash_unique_id_hash(uid);
     if (id == 0xF40010) {
         id ^= 1; // not the default address
     }
