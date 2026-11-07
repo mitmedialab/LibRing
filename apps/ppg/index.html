@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LibRing PPG</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1b2130; --muted: #667085; --border: #dde1e8;
+    --accent: #2563eb; --warn: #b42318; --ok: #067647; --grid: #eef0f4;
+    --green: #16a34a; --red: #dc2626; --ir: #7c3aed; --off: #98a2b3; --other: #64748b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10131a; --panel: #191d26; --text: #e7e9ee; --muted: #98a2b3; --border: #2c3240;
+      --accent: #60a5fa; --warn: #f97066; --ok: #47cd89; --grid: #222835;
+      --green: #4ade80; --red: #f87171; --ir: #a78bfa; --off: #667085; --other: #94a3b8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; flex: 1 1 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  input, select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border);
+                  background: var(--bg); color: var(--text); }
+  input[type=range] { padding: 0; width: 180px; accent-color: var(--accent); }
+  #status { color: var(--muted); }
+  #status.ok { color: var(--ok); } #status.err { color: var(--warn); }
+
+  .live { display: grid; grid-template-columns: 1fr 190px; gap: 12px; }
+  @media (max-width: 700px) { .live { grid-template-columns: 1fr; } }
+  .bpm { display: flex; flex-direction: column; align-items: center; justify-content: center;
+         border-left: 1px solid var(--border); padding-left: 12px; }
+  @media (max-width: 700px) { .bpm { border-left: 0; padding-left: 0; } }
+  .bpm .value { font-size: 56px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .bpm .unit { color: var(--muted); margin-top: 2px; }
+  .bpm .heart { font-size: 22px; color: var(--led); transition: transform .12s; }
+  .bpm .conf { color: var(--muted); font-size: 12px; margin-top: 8px; text-align: center; }
+  .trace-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 13px; }
+  .trace-head b { color: var(--text); font-weight: 600; }
+  canvas { width: 100%; display: block; }
+  #cpulse { height: 220px; } #craw { height: 110px; } #cother { height: 80px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  .meter { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; width: 160px; }
+  .meter > div { height: 100%; background: var(--led); width: 0; transition: width .3s; }
+
+  .leds { display: flex; gap: 6px; }
+  .led-btn { display: flex; align-items: center; gap: 6px; }
+  .led-btn .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--panel); }
+  .led-btn.active { border-color: var(--c); box-shadow: 0 0 0 1px var(--c) inset; font-weight: 600; }
+  label.inline { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+
+  details > summary { cursor: pointer; font-weight: 600; }
+  h2 { font-size: 15px; margin: 14px 0 8px; }
+  .regs { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
+  .reg { display: flex; gap: 6px; align-items: center; }
+  .reg label { width: 150px; font-size: 12px; color: var(--muted); }
+  .reg label code { color: var(--text); }
+  .reg input { width: 52px; font-family: ui-monospace, monospace; }
+  .reg input.changed { border-color: var(--accent); }
+  .small input { width: 60px; }
+  #log { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap;
+         max-height: 160px; overflow-y: auto; color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>LibRing PPG</h1>
+    <button id="connect" class="primary">Connect</button>
+    <button id="disconnect" disabled>Disconnect</button>
+    <span id="status">Not connected</span>
+  </header>
+
+  <div class="panel">
+    <div class="row" style="justify-content: space-between">
+      <div class="leds" id="leds">
+        <button class="led-btn" data-led="off" style="--c: var(--off)"><span class="dot"></span>Off</button>
+        <button class="led-btn" data-led="green" style="--c: var(--green)"><span class="dot"></span>Green</button>
+        <button class="led-btn" data-led="red" style="--c: var(--red)"><span class="dot"></span>Red</button>
+        <button class="led-btn" data-led="ir" style="--c: var(--ir)"><span class="dot"></span>IR</button>
+      </div>
+      <label class="inline">Brightness <input type="range" id="current" min="0" max="80" value="2">
+        <span id="currentv" style="width: 72px; color: var(--text)">2</span></label>
+      <label class="inline">Pulse <select id="ontime">
+        <option value="16">32 µs</option><option value="32" selected>64 µs</option>
+        <option value="64">128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option>
+      </select></label>
+      <label class="inline"><input type="checkbox" id="auto" checked> Auto brightness</label>
+    </div>
+    <p class="hint">Heart rate: green on the finger. Red and IR are for SpO2 (and IR shows only through a phone camera).</p>
+  </div>
+
+  <div class="panel" id="livepanel">
+    <div class="live">
+      <div>
+        <div class="trace-head"><span><b>Pulse</b> (LED channel, drift removed)</span><span id="pulseinfo"></span></div>
+        <canvas id="cpulse"></canvas>
+        <div class="trace-head" style="margin-top: 10px"><span><b>LED channel</b> raw</span>
+          <span style="display:flex; gap:8px; align-items:center">level <span class="meter"><div id="level"></div></span><span id="rawinfo"></span></span></div>
+        <canvas id="craw"></canvas>
+        <div class="trace-head" style="margin-top: 10px"><span><b>Other phase</b> (ambient / low IR)</span><span id="otherinfo"></span></div>
+        <canvas id="cother"></canvas>
+      </div>
+      <div class="bpm">
+        <div class="heart" id="heart">♥</div>
+        <div class="value" id="bpm">--</div>
+        <div class="unit">bpm</div>
+        <div class="conf" id="conf">Connect, then wear the ring</div>
+      </div>
+    </div>
+    <p class="hint" id="rate"></p>
+  </div>
+
+  <div class="panel">
+    <details>
+      <summary>Advanced: registers, GPIO, log</summary>
+
+      <h2>Registers (TYHX HX3918, hex)</h2>
+      <div class="row" style="margin-bottom:8px">
+        <button id="readall" disabled>Read from ring</button>
+        <button id="restart" disabled>Restart sensor (stock setup)</button>
+        <span class="hint" style="margin:0">Changing a value writes it right away.</span>
+      </div>
+      <div class="regs" id="regs"></div>
+
+      <h2>Any register</h2>
+      <div class="row small">
+        reg 0x<input id="wreg" value="28"> = 0x<input id="wval" value="02">
+        <button id="write" disabled>Write</button>
+        &nbsp; read 0x<input id="rreg" value="00"> count <input id="rcount" value="16">
+        <button id="read" disabled>Read</button>
+      </div>
+      <div class="row small" style="margin-top:8px">
+        sweep reg 0x<input id="sreg" value="28"> from 0x<input id="sfrom" value="00">
+        to 0x<input id="sto" value="40"> step <input id="sstep" value="8"> every
+        <input id="sdelay" value="1000"> ms
+        <button id="sweep" disabled>Sweep</button>
+      </div>
+
+      <h2>GPIO test</h2>
+      <div class="row">
+        <select id="gpin">
+          <option value="3,0">P3_0 (no known use)</option>
+          <option value="1,4">P1_4 (SWD clock)</option>
+          <option value="0,4">P0_4 (debug UART TX)</option>
+          <option value="0,7">P0_7 (charging input, read only)</option>
+          <option value="0,1">P0_1 (battery ADC, read only)</option>
+        </select>
+        <button class="gpio" data-mode="0" disabled>pull-down</button>
+        <button class="gpio" data-mode="1" disabled>pull-up</button>
+        <button class="gpio" data-mode="2" disabled>floating</button>
+        <button class="gpio" data-mode="3" disabled>out low</button>
+        <button class="gpio" data-mode="4" disabled>out high</button>
+        <button class="gpio" data-mode="5" disabled>restore</button>
+      </div>
+
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </details>
+  </div>
+</main>
+
+<script>
+'use strict';
+const SERVICE = '00112233-4455-6677-8899-aabbccddeeff';
+const PPG = 'e7da0718-b8b6-44b6-912c-e0bfb05d562d';
+const FS = 25;                 // samples per second and channel (stock setup)
+const WINDOW = FS * 10;        // 10 s on screen
+const FULL = 257700;           // LED channel ceiling (saturation)
+// HX3918 (chip ID 0x27): LED driver select of phase 2 in 0x2b bits 7:4 (LDR0 green,
+// LDR1 IR, LDR2 red on the SR08), LED current 0x28 (0-255 = 0-200 mA), on-time 0x1e
+const LEDS = {green: 0x10, red: 0x40, ir: 0x20};
+const REG_LED_SEL = 0x2b, REG_LED_CUR = 0x28, REG_ON_TIME = 0x1e;
+
+const REGS = [
+  [0x16, 'phase enable'], [0x17, 'oversampling'], [0x18, 'period [7:0]'], [0x19, 'period [15:8]'],
+  [0x1b, 'timing'], [0x1c, 'on-time ph0'], [0x1d, 'on-time ph1'], [0x1e, 'on-time ph2'], [0x1f, 'on-time ph3'],
+  [0x23, 'LED / DAC enables'], [0x24, 'int cap ph0/1'], [0x25, 'int cap ph2/3'],
+  [0x26, 'LED current ph0'], [0x27, 'LED current ph1'], [0x28, 'LED current ph2'], [0x29, 'LED current ph3'],
+  [0x2a, 'LED select ph0/1'], [0x2b, 'LED select ph2/3'],
+  [0x2c, 'DC cancel ph0'], [0x2d, 'DC cancel ph1'], [0x2e, 'DC cancel ph2'], [0x2f, 'DC cancel ph3'],
+  [0x3d, 'FIFO control'],
+];
+
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+let device = null, ppg = null, busy = Promise.resolve();
+const traces = [[], []];       // [other phase, LED channel]
+let sampleCount = 0, rateT0 = 0;
+let led = 'green', current = 2, lastAuto = 0;
+
+function log(msg) {
+  const el = $('log');
+  el.textContent += `${new Date().toLocaleTimeString()}  ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+function status(msg, cls = '') { const s = $('status'); s.textContent = msg; s.className = cls; }
+const hex = v => v.toString(16).padStart(2, '0');
+const parseHex = s => { const v = parseInt(s, 16); return Number.isInteger(v) && v >= 0 && v <= 255 ? v : null; };
+const ledColor = () => css(led === 'off' ? '--off' : `--${led}`);
+
+// GATT operations must not overlap: chain them
+function gatt(op) { busy = busy.then(op, op); return busy; }
+async function writeReg(reg, val) { await gatt(() => ppg.writeValueWithResponse(new Uint8Array([reg, val]))); }
+async function readRegs(reg, n) {
+  return gatt(async () => {
+    await ppg.writeValueWithResponse(new Uint8Array([0xfe, reg, n]));
+    await new Promise(r => setTimeout(r, 300)); // the ring holds notifications for 1 s
+    const v = new Uint8Array((await ppg.readValue()).buffer);
+    if (v.length !== 3 + n || v[0] !== 0xfe || v[1] !== reg) throw new Error('unexpected read result');
+    return Array.from(v.slice(3));
+  });
+}
+async function gpioTest(port, pin, mode) {
+  return gatt(async () => {
+    await ppg.writeValueWithResponse(new Uint8Array([0xfd, port, pin, mode]));
+    await new Promise(r => setTimeout(r, 300));
+    const v = new Uint8Array((await ppg.readValue()).buffer);
+    if (v.length !== 5 || v[0] !== 0xfd || v[4] === 0xff) throw new Error('refused by the firmware');
+    return v[4];
+  });
+}
+
+function onPacket(event) {
+  const d = new Uint8Array(event.target.value.buffer);
+  // register / GPIO read results also come here (readValue fires this event)
+  if (d.length < 3 || d.length !== 3 + 3 * d[1]) return;
+  for (let k = 0; k < d[1]; k++) {
+    const raw = d[3 + 3 * k] | (d[4 + 3 * k] << 8) | (d[5 + 3 * k] << 16);
+    let v = raw & 0x1fffff;
+    if (v & 0x100000) v -= 0x200000;
+    const flag = (raw >> 21) & 3;
+    if (flag > 1) continue;
+    const t = traces[flag];
+    t.push(v);
+    if (t.length > WINDOW) t.shift();
+    sampleCount++;
+  }
+}
+
+// ---- signal processing ----
+function movingAverage(x, n) {
+  const out = new Array(x.length);
+  let s = 0;
+  for (let i = 0; i < x.length; i++) {
+    s += x[i];
+    if (i >= n) s -= x[i - n];
+    out[i] = s / Math.min(i + 1, n);
+  }
+  return out;
+}
+// Drift removal: subtract a centred 1.5 s moving average, then smooth (3 samples)
+function pulseOf(x) {
+  const n = Math.round(1.5 * FS), h = Math.floor(n / 2);
+  if (x.length < n + 4) return [];
+  const ma = movingAverage(x, n);
+  const ac = [];
+  for (let i = h; i < x.length - h; i++) ac.push(x[i] - ma[i + h]);
+  return movingAverage(ac, 3).slice(2);
+}
+// Heart rate by autocorrelation over the last 8 s: [bpm, r]
+function heartRate(ac) {
+  const x = ac.slice(-8 * FS);
+  if (x.length < 5 * FS) return [null, 0];
+  const m = x.reduce((a, b) => a + b, 0) / x.length;
+  const y = x.map(v => v - m);
+  const e = y.reduce((a, b) => a + b * b, 0) || 1;
+  let best = 0, lag = 0;
+  for (let L = Math.round(0.33 * FS); L <= Math.round(1.5 * FS); L++) {
+    let s = 0;
+    for (let i = 0; i + L < y.length; i++) s += y[i] * y[i + L];
+    const r = s / e * y.length / (y.length - L);
+    if (r > best) { best = r; lag = L; }
+  }
+  return lag ? [60 * FS / lag, best] : [null, 0];
+}
+
+// ---- drawing ----
+function draw(canvas, data, color, opts = {}) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
+  for (let s = 1; s < 10; s++) { const x = Math.round(w * s / 10) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  if (data.length < 2) return;
+  let min = Math.min(...data), max = Math.max(...data);
+  if (max === min) { max += 1; min -= 1; }
+  const pad = (max - min) * 0.08;
+  const span = opts.span || WINDOW;
+  ctx.strokeStyle = color; ctx.lineWidth = opts.width || 1.5; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  const x0 = w * (1 - data.length / span);
+  data.forEach((v, i) => {
+    const x = x0 + (i / (span - 1)) * w;
+    const y = h - ((v - min + pad) / (max - min + 2 * pad)) * h;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+}
+
+let lastBeat = 0;
+function render() {
+  const color = ledColor();
+  document.documentElement.style.setProperty('--led', color);
+  const raw = traces[1], other = traces[0];
+  const ac = pulseOf(raw);
+  draw($('cpulse'), ac, color, {width: 2.2, span: WINDOW - Math.round(1.5 * FS)});
+  draw($('craw'), raw, color);
+  draw($('cother'), other, css('--other'));
+
+  if (raw.length) {
+    const last = raw.slice(-FS);
+    const mean = last.reduce((a, b) => a + b, 0) / last.length;
+    $('level').style.width = `${Math.max(0, Math.min(100, 100 * mean / FULL))}%`;
+    $('rawinfo').textContent = `${Math.round(mean)}`;
+    const sat = Math.max(...last) > FULL * 0.97;
+    const [bpm, r] = heartRate(ac);
+    const conf = $('conf');
+    if (led === 'off') { $('bpm').textContent = '--'; conf.textContent = 'LED off'; }
+    else if (sat) { $('bpm').textContent = '--'; conf.textContent = 'Saturated: lower the brightness'; }
+    else if (bpm && r > 0.45) {
+      $('bpm').textContent = Math.round(bpm);
+      conf.textContent = `confidence ${(r * 100).toFixed(0)}%`;
+      // beat the heart once per period
+      const now = performance.now();
+      if (now - lastBeat > 60000 / bpm) {
+        lastBeat = now;
+        $('heart').style.transform = 'scale(1.35)';
+        setTimeout(() => { $('heart').style.transform = ''; }, 140);
+      }
+    } else {
+      $('bpm').textContent = '--';
+      conf.textContent = raw.length < 6 * FS ? 'Measuring…' : 'No clear pulse: keep still, ring on the finger';
+    }
+    if (ac.length) {
+      const recent = ac.slice(-4 * FS);
+      $('pulseinfo').textContent = `amplitude ${Math.round(Math.max(...recent) - Math.min(...recent))}`;
+    }
+    autoBrightness(mean, Math.max(...last));
+  }
+  if (other.length) $('otherinfo').textContent = `${other[other.length - 1]}`;
+
+  const now = performance.now();
+  if (ppg && now - rateT0 > 2000) {
+    $('rate').textContent = `${(sampleCount / ((now - rateT0) / 1000) / 2).toFixed(1)} samples/s per channel`;
+    sampleCount = 0; rateT0 = now;
+  }
+  requestAnimationFrame(render);
+}
+
+// Keep the LED channel around 25-70 % of full scale
+function autoBrightness(mean, max) {
+  if (!ppg || !$('auto').checked || led === 'off') return;
+  const now = performance.now();
+  if (now - lastAuto < 1500 || traces[1].length < FS) return;
+  lastAuto = now;
+  let c = current;
+  if (max > FULL * 0.9 || mean > FULL * 0.7) c = Math.max(1, c - (mean > FULL * 0.9 ? Math.max(1, c >> 2) : 1));
+  else if (mean < FULL * 0.25) c = Math.min(80, c + 1);
+  if (c !== current) setCurrent(c, 'auto').catch(e => log(e.message));
+}
+
+// ---- LED control ----
+function showLed() {
+  document.querySelectorAll('.led-btn').forEach(b => b.classList.toggle('active', b.dataset.led === led));
+  $('current').value = current;
+  $('currentv').textContent = `${current} (${(current * 200 / 255).toFixed(1)} mA)`;
+}
+async function setCurrent(c, why = '') {
+  current = c;
+  showLed();
+  if (ppg && led !== 'off') {
+    await writeReg(REG_LED_CUR, c);
+    if (why) log(`${why}: LED current 0x28 = ${c}`);
+  }
+}
+async function setLed(name) {
+  led = name;
+  showLed();
+  if (!ppg) return;
+  traces[1].length = 0;
+  if (name === 'off') { await writeReg(REG_LED_CUR, 0); log('LED off'); return; }
+  await writeReg(REG_LED_SEL, LEDS[name]);
+  await writeReg(REG_LED_CUR, current);
+  log(`LED ${name}: 0x2b = 0x${hex(LEDS[name])}, 0x28 = ${current}`);
+}
+
+// ---- registers ----
+function buildRegs() {
+  const box = $('regs');
+  for (const [r, name] of REGS) {
+    const div = document.createElement('div');
+    div.className = 'reg';
+    div.innerHTML = `<label><code>0x${hex(r)}</code> ${name}</label><input id="r${hex(r)}" placeholder="--">`;
+    box.appendChild(div);
+    const input = div.querySelector('input');
+    input.addEventListener('change', async () => {
+      const v = parseHex(input.value);
+      if (v === null || !ppg) return;
+      try { await writeReg(r, v); input.classList.add('changed'); log(`write 0x${hex(r)} = 0x${hex(v)}`); }
+      catch (e) { log(`write failed: ${e.message}`); }
+    });
+  }
+}
+async function readAll() {
+  const chunks = [];
+  for (const [r] of REGS) {
+    const last = chunks[chunks.length - 1];
+    if (last && r === last[0] + last[1] && last[1] < 16) last[1]++;
+    else chunks.push([r, 1]);
+  }
+  try {
+    for (const [reg, n] of chunks) {
+      const vals = await readRegs(reg, n);
+      vals.forEach((v, i) => {
+        const input = $(`r${hex(reg + i)}`);
+        if (input) { input.value = hex(v); input.classList.remove('changed'); }
+      });
+    }
+    log('registers read');
+  } catch (e) { log(`read failed: ${e.message}`); }
+}
+
+// ---- connection ----
+async function startSensor() {
+  traces[0].length = traces[1].length = 0;
+  await gatt(() => ppg.startNotifications()); // subscribing starts the sensor (stock setup)
+  rateT0 = performance.now(); sampleCount = 0;
+  await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
+  await setLed(led);
+}
+async function restart() {
+  await gatt(() => ppg.stopNotifications());
+  await new Promise(r => setTimeout(r, 300));
+  await startSensor();
+  log('sensor restarted');
+}
+function setConnected(on) {
+  for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep']) $(id).disabled = !on;
+  document.querySelectorAll('button.gpio').forEach(b => { b.disabled = !on; });
+  $('connect').disabled = on;
+}
+async function connect() {
+  try {
+    status('Choose the ring…');
+    device = await navigator.bluetooth.requestDevice({filters: [{namePrefix: 'LibRing'}], optionalServices: [SERVICE]});
+    device.addEventListener('gattserverdisconnected', () => {
+      ppg = null; setConnected(false); status('Disconnected', 'err'); log('disconnected');
+    });
+    status('Connecting…');
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE);
+    try { ppg = await service.getCharacteristic(PPG); }
+    catch (e) { throw new Error('this ring has no PPG characteristic: flash the ppg branch firmware'); }
+    ppg.addEventListener('characteristicvaluechanged', onPacket);
+    await startSensor();
+    setConnected(true);
+    status(`Connected to ${device.name}`, 'ok');
+    log(`connected to ${device.name}`);
+  } catch (e) {
+    status(e.message, 'err');
+    log(`connect failed: ${e.message}`);
+  }
+}
+
+async function sweep() {
+  const reg = parseHex($('sreg').value), from = parseHex($('sfrom').value), to = parseHex($('sto').value);
+  const step = Math.max(1, parseInt($('sstep').value, 10) || 1);
+  const delay = Math.max(200, parseInt($('sdelay').value, 10) || 1000);
+  if (reg === null || from === null || to === null) return;
+  $('sweep').disabled = true;
+  try {
+    for (let v = from; from <= to ? v <= to : v >= to; v += from <= to ? step : -step) {
+      await writeReg(reg, v);
+      log(`sweep 0x${hex(reg)} = 0x${hex(v)}`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  } catch (e) { log(`sweep stopped: ${e.message}`); }
+  $('sweep').disabled = !ppg;
+}
+
+// ---- wiring ----
+$('connect').onclick = connect;
+$('disconnect').onclick = () => device && device.gatt.disconnect();
+$('restart').onclick = restart;
+$('readall').onclick = readAll;
+document.querySelectorAll('.led-btn').forEach(b => { b.onclick = () => setLed(b.dataset.led).catch(e => log(e.message)); });
+$('current').oninput = () => { $('auto').checked = false; setCurrent(parseInt($('current').value, 10), 'manual').catch(e => log(e.message)); };
+$('ontime').onchange = () => ppg && writeReg(REG_ON_TIME, parseInt($('ontime').value, 10)).then(() => log(`on-time 0x1e = ${$('ontime').value}`));
+$('write').onclick = async () => {
+  const r = parseHex($('wreg').value), v = parseHex($('wval').value);
+  if (r === null || v === null) return;
+  try { await writeReg(r, v); log(`write 0x${hex(r)} = 0x${hex(v)}`); } catch (e) { log(`write failed: ${e.message}`); }
+};
+$('read').onclick = async () => {
+  const r = parseHex($('rreg').value), n = Math.min(16, Math.max(1, parseInt($('rcount').value, 10) || 1));
+  if (r === null) return;
+  try { log(`read 0x${hex(r)}..: ${(await readRegs(r, n)).map(hex).join(' ')}`); } catch (e) { log(`read failed: ${e.message}`); }
+};
+$('sweep').onclick = sweep;
+document.querySelectorAll('button.gpio').forEach(b => {
+  b.onclick = async () => {
+    const [port, pin] = $('gpin').value.split(',').map(Number);
+    try { log(`P${port}_${pin} ${b.textContent}: reads ${await gpioTest(port, pin, Number(b.dataset.mode))}`); }
+    catch (e) { log(`P${port}_${pin} ${b.textContent}: ${e.message}`); }
+  };
+});
+buildRegs();
+showLed();
+if (!navigator.bluetooth) status('Web Bluetooth not available: use Chrome or Edge', 'err');
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
