@@ -34,6 +34,7 @@
 #include "user_custs1_impl.h"
 
 #include "fluid/fluid_5x25.h"
+#include "ppg/hx3605.h"
 
 #include "battery.h"
 
@@ -770,6 +771,37 @@ static void fluid_start_cb(void)
     }
 }
 
+// ---- PPG probe (branch ppg, step 1): results in the scan response ----
+// Manufacturer specific data (AD type 0xFF), layout in ppg_probe() (src/ppg/hx3605.h).
+// All zeros until the probe ran: the scan response is copied when advertising
+// (re)starts, so the results show after the next connection + disconnection.
+static uint8_t ppg_scan_rsp[2 + PPG_PROBE_LEN] = {1 + PPG_PROBE_LEN, GAP_AD_TYPE_MANU_SPECIFIC_DATA};
+
+// Replaces default_advertise_operation() (user_callback_config.h): the same
+// advertising (DEF_ADV_FOREVER), with the probe results as scan response
+void user_advertise_operation(void)
+{
+    struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
+    memcpy(cmd->info.host.scan_rsp_data, ppg_scan_rsp, sizeof(ppg_scan_rsp));
+    cmd->info.host.scan_rsp_data_len = sizeof(ppg_scan_rsp);
+    app_easy_gap_undirected_advertise_start();
+}
+
+// Once, 7 s after boot (the I2C controller is set up at 5 s by fluid_start_cb()).
+// Skipped while connected or updating: if the probe ever hung the ring (watchdog
+// reset), connecting within 7 s after boot would still allow a firmware update.
+static void ppg_probe_cb(void)
+{
+    if (suota_active || ke_state_get(TASK_APP) == APP_CONNECTED) {
+        arch_printf("PPG probe skipped\r\n");
+        return;
+    }
+    ppg_probe(&ppg_scan_rsp[2]);
+    arch_printf("PPG chip ID: 0x%02X before wake, 0x%02X after\r\n",
+                ppg_scan_rsp[2 + 16], ppg_scan_rsp[2 + 17]);
+}
+// ---- end PPG probe ----
+
 void user_app_on_db_init_complete(void)
 {
     default_app_on_db_init_complete();
@@ -778,6 +810,7 @@ void user_app_on_db_init_complete(void)
     // the ring reset in a loop, this leaves a window to start a SUOTA update
     // (which pauses the display) and flash a fixed firmware
     app_easy_timer(500, fluid_start_cb); // 5 s
+    app_easy_timer(700, ppg_probe_cb); // 7 s (PPG probe)
 }
 
 static void app_button_press_cb(void)

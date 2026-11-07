@@ -133,7 +133,7 @@ static const struct app_bond_db_callbacks user_app_bond_db_callbacks = {
 
 // Default Handler Operations
 static const struct default_app_operations user_default_app_operations = {
-    .default_operation_adv = default_advertise_operation,
+    .default_operation_adv = user_advertise_operation, // PPG probe (branch ppg)
 };
 
 static const struct arch_main_loop_callbacks user_app_main_loop_callbacks = {

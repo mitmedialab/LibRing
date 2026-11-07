@@ -108,6 +108,7 @@ C_SRC_DIRS := \
     $(PROJ_SRC)                             \
     $(PROJ_SRC)/accelerometer               \
     $(PROJ_SRC)/fluid                       \
+    $(PROJ_SRC)/ppg                         \
     $(PROJ_SRC)/custom_profile              \
     $(PROJ_SRC)/platform
 

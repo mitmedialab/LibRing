@@ -232,6 +232,9 @@ void user_accel_streaming(bool enable);
 // Gives the ring its own BLE address if it has the default one (called by periph_init())
 void user_bd_address_init(void);
 
+// PPG probe (branch ppg): advertising with the probe results as scan response
+void user_advertise_operation(void);
+
 /// @} APP
 
 #endif // _USER_PROXR_H_
