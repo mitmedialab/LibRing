@@ -67,6 +67,9 @@ uint8_t notify_accel_data(const accel_sensitivity_t* sens, const accel_data_t *a
 
 void update_btn_data(uint8_t btn_pressed); 
 
+void notify_ppg_data(const uint8_t *data, uint16_t len);
+void set_ppg_value(const uint8_t *data, uint16_t len);
+
 void notify_btn_data(uint8_t btn_pressed); 
 
 void update_batt_data(uint32_t batt); 

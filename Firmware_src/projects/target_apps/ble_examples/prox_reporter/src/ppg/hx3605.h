@@ -4,9 +4,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// PPG sensor (heart rate / SpO2): TYHX HX3605 variant, on the I2C bus shared with
-// the accelerometer (P2_3/P2_4). The stock firmware expects chip ID 0x27 (register
-// 0x00) at address 0x44; the HX3605 datasheet and TYHX reference driver say 0x25.
+// PPG sensor (heart rate / SpO2): TYHX HX3918 (chip ID 0x27 in register 0x00, I2C
+// address 0x44; not the HX3605 = 0x25 of issue #3), on the I2C bus shared with the
+// accelerometer (P2_3/P2_4). Vendor driver (register map, LED gain control):
+// github.com/HK-bruc1/jl_ac701N_ear SDK/apps/common/device/sensor/hr_sensor/hx3918/
+// LEDs on the SR08: LDR0 green, LDR1 IR, LDR2 red. Main registers: 0x16 phase enable,
+// 0x18/0x19 period (32000 / Hz), 0x1c-0x1f LED on-time per phase, 0x23 LED enables,
+// 0x26-0x29 LED current per phase (0-255 = 0-200 mA), 0x2a/0x2b LED driver select.
 #define HX3605_I2C_ADDR     0x44
 #define HX3605_REG_CHIP_ID  0x00
 #define HX3605_REG_SLEEP    0x01 // 0x00: awake, 0x01: sleep (reference driver)
@@ -16,6 +20,34 @@
 // initialized (accel_init()). Return false on an I2C error.
 bool hx3605_read_regs(uint8_t reg, uint8_t *buf, uint8_t len);
 bool hx3605_write_reg(uint8_t reg, uint8_t value);
+
+// ---- Streaming (branch ppg, step 2) ----
+// The setup is the one of the stock firmware (Stock_V160.bin), recorded by emulating
+// its heart-rate mode (25 Hz, FIFO). It leaves the green LED (phase 2 current, 0x28)
+// at 0: the stock firmware's gain control raises it during a measurement. ~2 (1.6 mA)
+// suits a finger (0x08 already saturates).
+#define HX3605_REG_FIFO_CTRL  0x3d // FIFO enable + data select (0x83 in HR mode)
+#define HX3605_REG_FIFO_COUNT 0x40
+#define HX3605_REG_FIFO_DATA  0x41 // 3 bytes per sample
+#define HX3605_FIFO_DEPTH     64
+
+// Wakes the chip, checks its ID (0x27) and starts the stock heart-rate setup.
+// Returns false if the chip doesn't answer.
+bool ppg_start(void);
+
+// Stock "off" setup: sampling off, chip asleep
+void ppg_stop(void);
+
+// Notification packet, read every ~100 ms (25 Hz: ~2-3 samples):
+//   [0]      sequence number (wraps)
+//   [1]      n, number of FIFO samples in this packet
+//   [2]      FIFO count register before reading
+//   [3..]    n FIFO samples (register 0x41), 3 bytes each, raw, little endian
+#define PPG_MAX_SAMPLES 16
+#define PPG_PACKET_MAX  (3 + 3 * PPG_MAX_SAMPLES)
+
+// Fills packet, returns its length (0 on an I2C error)
+uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX]);
 
 // ---- Probe (branch ppg, step 1) ----
 #define PPG_PROBE_LEN 29

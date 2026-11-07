@@ -379,6 +379,125 @@ void user_accel_streaming(bool enable) {
     }
 }
 
+// ---- PPG streaming (branch ppg, step 2) ----
+static bool ppg_streaming = false;
+// main timer ticks (100 ms) without notification, so that the client can read the
+// result of a register read from the characteristic value
+static uint8_t ppg_hold = 0;
+
+void user_ppg_streaming(bool enable) {
+    if (enable == ppg_streaming || (enable && suota_active)) {
+        return;
+    }
+    if (enable) {
+        arch_force_active_mode(); // keep the I2C peripheral powered (as for the accel)
+        accel_init();             // I2C controller set up
+        ppg_streaming = ppg_start();
+        arch_printf("PPG start: %d\r\n", ppg_streaming);
+        if (!ppg_streaming) {
+            arch_restore_sleep_mode();
+            return;
+        }
+        if (!has_timer_started) {
+            has_timer_started = true;
+            start_main_timer();
+        }
+    } else {
+        ppg_streaming = false;
+        ppg_stop();
+        arch_restore_sleep_mode();
+        arch_printf("PPG stop\r\n");
+    }
+}
+
+// GPIO test (to look for LEDs driven by the MCU): only the pins with no known use
+// or with a harmless one. 'drive' = may be set as an output. Default mode restored by
+// GPIO_MODE_RESTORE.
+static const struct {
+    GPIO_PORT port;
+    GPIO_PIN pin;
+    bool drive;
+    GPIO_PUPD restore_mode;
+    GPIO_FUNCTION restore_function;
+} gpio_test_pins[] = {
+    {GPIO_PORT_3, GPIO_PIN_0, true,  INPUT_PULLDOWN, PID_GPIO},      // no known use
+    {GPIO_PORT_1, GPIO_PIN_4, true,  INPUT_PULLDOWN, PID_GPIO},      // SWD clock
+    {GPIO_PORT_0, GPIO_PIN_4, true,  OUTPUT,         PID_UART2_TX},  // debug UART TX
+    {GPIO_PORT_0, GPIO_PIN_7, false, INPUT_PULLDOWN, PID_GPIO},      // charging input
+    {GPIO_PORT_0, GPIO_PIN_1, false, INPUT,          PID_ADC},       // battery ADC
+};
+
+enum { GPIO_TEST_IN_PULLDOWN, GPIO_TEST_IN_PULLUP, GPIO_TEST_IN, GPIO_TEST_OUT_LOW,
+       GPIO_TEST_OUT_HIGH, GPIO_TEST_RESTORE };
+
+// [0xFD, port, pin, mode] -> characteristic value [0xFD, port, pin, mode, level]
+// (level: 0/1 read back after 1 ms, 0xFF if the pin or the mode is not allowed)
+static void gpio_test(uint8_t port, uint8_t pin, uint8_t mode) {
+    uint8_t result[5] = {0xFD, port, pin, mode, 0xFF};
+    for (unsigned i = 0; i < sizeof(gpio_test_pins) / sizeof(gpio_test_pins[0]); i++) {
+        if (gpio_test_pins[i].port != port || gpio_test_pins[i].pin != pin) {
+            continue;
+        }
+        bool output = mode == GPIO_TEST_OUT_LOW || mode == GPIO_TEST_OUT_HIGH;
+        if ((output && !gpio_test_pins[i].drive) || mode > GPIO_TEST_RESTORE) {
+            break;
+        }
+        switch (mode) {
+        case GPIO_TEST_IN_PULLDOWN: GPIO_ConfigurePin(port, pin, INPUT_PULLDOWN, PID_GPIO, false); break;
+        case GPIO_TEST_IN_PULLUP:   GPIO_ConfigurePin(port, pin, INPUT_PULLUP, PID_GPIO, false); break;
+        case GPIO_TEST_IN:          GPIO_ConfigurePin(port, pin, INPUT, PID_GPIO, false); break;
+        case GPIO_TEST_OUT_LOW:     GPIO_ConfigurePin(port, pin, OUTPUT, PID_GPIO, false); break;
+        case GPIO_TEST_OUT_HIGH:    GPIO_ConfigurePin(port, pin, OUTPUT, PID_GPIO, true); break;
+        default:
+            GPIO_ConfigurePin(port, pin, gpio_test_pins[i].restore_mode,
+                              gpio_test_pins[i].restore_function, true);
+            break;
+        }
+        arch_asm_delay_us(1000);
+        result[4] = GPIO_GetPinStatus(port, pin);
+        break;
+    }
+    set_ppg_value(result, sizeof(result));
+    ppg_hold = 10;
+}
+
+// Register access from the client, to experiment (writes to the PPG characteristic):
+//   [reg, value]        write a register
+//   [0xFE, reg, n]      read n registers (n <= 16): the characteristic value becomes
+//                       [0xFE, reg, n, values...] and notifications pause for 1 s
+//   [0xFD, port, pin, mode]  GPIO test, see gpio_test()
+// Needs the I2C controller (set up 5 s after boot or by a subscription).
+void user_ppg_config(const uint8_t *value, uint16_t len) {
+    if (suota_active || !has_timer_started) {
+        return;
+    }
+    if (len == 4 && value[0] == 0xFD) {
+        gpio_test(value[1], value[2], value[3]);
+    } else if (len == 2) {
+        hx3605_write_reg(value[0], value[1]);
+    } else if (len == 3 && value[0] == 0xFE && value[2] <= 16) {
+        uint8_t result[3 + 16];
+        memcpy(result, value, 3);
+        if (hx3605_read_regs(value[1], &result[3], value[2])) {
+            set_ppg_value(result, 3 + value[2]);
+            ppg_hold = 10;
+        }
+    }
+}
+
+static void ppg_poll(void) {
+    if (ppg_hold) {
+        ppg_hold--;
+        return;
+    }
+    uint8_t packet[PPG_PACKET_MAX];
+    uint8_t len = ppg_read(packet);
+    if (len) {
+        notify_ppg_data(packet, len);
+    }
+}
+// ---- end PPG streaming ----
+
 static void main_timer_cb(void) {
 
     if (suota_active) {
@@ -388,6 +507,10 @@ static void main_timer_cb(void) {
 
     if (accel_streaming) {
         read_and_notify_accel();
+    }
+
+    if (ppg_streaming) {
+        ppg_poll();
     }
 
     if (!user_run) {
@@ -876,6 +999,7 @@ void app_button_enable(void)
 void on_suotar_status_change(const uint8_t suotar_event)
 {
     if (suotar_event == SUOTAR_START) {
+        user_ppg_streaming(false); // before suota_active (ppg_stop() uses the I2C)
         suota_active = true;
         LED_GPIO_mode(0);
         arch_force_active_mode(); // stay awake during the update (keeps the I2C setup)
@@ -909,6 +1033,7 @@ void user_app_on_disconnect(struct gapc_disconnect_ind const *param)
     default_app_on_disconnect(NULL);
 
     user_accel_streaming(false);
+    user_ppg_streaming(false);
 
     // if (main_timer_hnd != EASY_TIMER_INVALID_TIMER) {
     //     app_easy_timer_cancel(main_timer_hnd);

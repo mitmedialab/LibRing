@@ -85,6 +85,63 @@ void user_custs1_wr_ind_handler(ke_msg_id_t const msgid,
 	{
 		user_accel_streaming(param->value[0] & PRF_CLI_START_NTF);
 	}
+	else if (param->handle == SVC1_IDX_PPG_NTF_CFG)
+	{
+		user_ppg_streaming(param->value[0] & PRF_CLI_START_NTF);
+	}
+	else if (param->handle == SVC1_IDX_PPG_VAL)
+	{
+		user_ppg_config(param->value, param->length);
+	}
+}
+
+// Value of the PPG characteristic, without notification (read by the client)
+void set_ppg_value(const uint8_t *data, uint16_t len)
+{
+    if (PRF_ENV_GET(CUSTS1, custs1) == NULL || ke_state_get(TASK_ID_CUSTS1) == CUSTS1_BUSY) {
+        return;
+    }
+    if (len > DEF_SVC1_PPG_CHAR_LEN) {
+        len = DEF_SVC1_PPG_CHAR_LEN;
+    }
+    struct custs1_val_set_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_SET_REQ,
+                                                      prf_get_task_from_id(TASK_ID_CUSTS1),
+                                                      TASK_APP,
+                                                      custs1_val_set_req,
+                                                      len);
+    if (req == NULL) {
+        return;
+    }
+    req->conidx = 0;
+    req->handle = SVC1_IDX_PPG_VAL;
+    req->length = len;
+    memcpy(req->value, data, len);
+    ke_msg_send(req);
+}
+
+// Notification of the PPG characteristic (len <= DEF_SVC1_PPG_CHAR_LEN)
+void notify_ppg_data(const uint8_t *data, uint16_t len)
+{
+    if (PRF_ENV_GET(CUSTS1, custs1) == NULL || ke_state_get(TASK_ID_CUSTS1) == CUSTS1_BUSY) {
+        return; // service not ready, or busy: skip this packet (as for the accel)
+    }
+    if (len > DEF_SVC1_PPG_CHAR_LEN) {
+        len = DEF_SVC1_PPG_CHAR_LEN;
+    }
+    struct custs1_val_ntf_ind_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_NTF_REQ,
+                                                          prf_get_task_from_id(TASK_ID_CUSTS1),
+                                                          TASK_APP,
+                                                          custs1_val_ntf_ind_req,
+                                                          len);
+    if (req == NULL) {
+        return;
+    }
+    req->conidx = 0;
+    req->handle = SVC1_IDX_PPG_VAL;
+    req->length = len;
+    req->notification = true;
+    memcpy(req->value, data, len);
+    ke_msg_send(req);
 }
 
 uint8_t update_accel_data(const accel_sensitivity_t* sens, const accel_data_t *accel_data)
