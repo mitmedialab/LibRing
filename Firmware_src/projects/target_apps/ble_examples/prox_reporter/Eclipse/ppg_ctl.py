@@ -25,7 +25,7 @@ import time
 from bleak import BleakClient, BleakScanner
 
 PPG = "e7da0718-b8b6-44b6-912c-e0bfb05d562d"
-HEADER = 13  # ppg_read() in src/ppg/hx3605.h
+HEADER = 19  # ppg_read() in src/ppg/hx3605.h
 
 # HX3918: phase 2 LED driver select 0x2b (bits 7:4), current 0x28 (0-255 = 0-200 mA)
 PRESETS = {

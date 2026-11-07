@@ -5,6 +5,8 @@
 #include "arch.h"
 #include "i2c.h"
 #include "accelerometer.h"
+#include "lld_evt.h"
+#include "ppg_hr.h"
 
 // The target address can only be changed while the I2C controller is disabled
 // (same sequence as set_dev_addr() in the SDK examples)
@@ -53,6 +55,15 @@ bool hx3605_write_reg(uint8_t reg, uint8_t value)
 
 // true after a FIFO reset: the reference driver drops the first sample then
 static bool fifo_first_read = true;
+
+// Sample rate (measured) and heart rate (ppg_hr.c)
+#define FS_DEFAULT_X100 2420       // HX3918 at "25 Hz": its clock runs ~3 % slow
+#define FS_MIN_SLOTS    8000       // 5 s (625 us BLE slots) before using the measure
+#define FS_MAX_SLOTS    96000      // 60 s: restart the measurement window
+static uint16_t fs_x100 = FS_DEFAULT_X100;
+static uint32_t fs_t0, fs_count;
+static uint16_t hr_bpm_x10;
+static uint8_t hr_confidence, hr_polls, motion_level;
 
 static void delay_ms(uint32_t ms)
 {
@@ -138,6 +149,9 @@ bool ppg_start(void)
         return false;
     }
     fifo_first_read = true;
+    fs_t0 = lld_evt_time_get();
+    fs_count = 0;
+    fs_x100 = FS_DEFAULT_X100;
     if (!write_table(stock_hr_setup, sizeof(stock_hr_setup) / sizeof(stock_hr_setup[0]))) {
         return false;
     }
@@ -160,6 +174,36 @@ static struct {
     bool enabled;
     uint8_t state, led, current, led_idac, amb_idac, wait, out_count;
 } agc = {.enabled = true, .led = PPG_LED_GREEN};
+
+// ---- Heart rate (ppg_hr.c) and sample rate ----
+
+void ppg_set_motion(uint8_t level)
+{
+    motion_level = level;
+}
+
+static void hr_restart(void)
+{
+    ppg_hr_reset();
+    hr_bpm_x10 = 0;
+    hr_confidence = 0;
+}
+
+static void fs_update(uint32_t led_samples)
+{
+    uint32_t elapsed = (lld_evt_time_get() - fs_t0) & 0x07FFFFFF;
+    fs_count += led_samples;
+    if (elapsed >= FS_MIN_SLOTS) {
+        uint32_t fs = (uint32_t)((uint64_t)fs_count * 160000 / elapsed); // 1 slot = 1/1600 s
+        if (fs > 500 && fs < 10000) {
+            fs_x100 = (uint16_t)fs;
+        }
+    }
+    if (elapsed >= FS_MAX_SLOTS) {
+        fs_t0 = lld_evt_time_get();
+        fs_count = 0;
+    }
+}
 
 // Raw phase readings (vendor read_data_packet()): ps[2] LED (green), ps[3] ambient
 static int32_t raw_phase[4];
@@ -184,6 +228,7 @@ static void agc_apply(void)
 void ppg_set_led(uint8_t led)
 {
     agc.led = led;
+    hr_restart();
     if (led == PPG_LED_OFF) {
         agc.current = 0;
         hx3605_write_reg(0x28, 0);
@@ -219,6 +264,7 @@ static void agc_step(void)
     int32_t led = raw_phase[2], amb = raw_phase[3];
     switch (agc.state) {
     case PPG_AGC_START:
+        hr_restart();
         agc.current = AGC_INIT_CURRENT;
         agc.led_idac = 0;
         agc.amb_idac = 0;
@@ -306,6 +352,30 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
         hx3605_write_reg(HX3605_REG_FIFO_CTRL, ctrl);
         fifo_first_read = true;
     }
+    // LED channel samples (phase flag 1) -> sample rate, heart rate
+    uint32_t led_samples = 0;
+    bool settled = agc.state == PPG_AGC_LOCKED || agc.state == PPG_AGC_OFF;
+    for (int k = 0; k < n; k++) {
+        const uint8_t *p = &packet[PPG_HEADER + 3 * k];
+        uint32_t raw = p[0] | (p[1] << 8) | ((uint32_t)p[2] << 16);
+        if (((raw >> 21) & 3) != 1) {
+            continue;
+        }
+        led_samples++;
+        int32_t v = raw & 0x1FFFFF;
+        if (v & 0x100000) {
+            v -= 0x200000;
+        }
+        if (settled && agc.led != PPG_LED_OFF) {
+            ppg_hr_add(v);
+        }
+    }
+    fs_update(led_samples);
+    if (++hr_polls >= 10) { // ~1 s
+        hr_polls = 0;
+        ppg_hr_compute(fs_x100, &hr_bpm_x10, &hr_confidence);
+    }
+
     read_phases();
     if (agc.enabled) {
         agc_step();
@@ -321,6 +391,12 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
         packet[7 + i] = raw_phase[2] >> (8 * i);
         packet[10 + i] = raw_phase[3] >> (8 * i);
     }
+    packet[13] = hr_bpm_x10;
+    packet[14] = hr_bpm_x10 >> 8;
+    packet[15] = hr_confidence;
+    packet[16] = fs_x100;
+    packet[17] = fs_x100 >> 8;
+    packet[18] = motion_level;
     return PPG_HEADER + 3 * n;
 }
 

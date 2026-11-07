@@ -184,7 +184,7 @@ const FULL = 257700;           // LED channel ceiling (saturation)
 const LEDS = {green: 0x10, red: 0x40, ir: 0x20};
 const REG_LED_CUR = 0x28, REG_ON_TIME = 0x1e;
 const CMD_AGC = 0xfc, CMD_LED = 0xfb;  // [0xFC, on], [0xFB, LED select]
-const HEADER = 13;                      // ppg_read() in src/ppg/hx3605.h
+const HEADER = 19;                      // ppg_read() in src/ppg/hx3605.h
 const AGC_STATES = ['manual', 'starting', 'setting current', 'setting offset', 'locked'];
 
 const REGS = [
@@ -243,7 +243,8 @@ function onPacket(event) {
   if (d.length < HEADER || d.length !== HEADER + 3 * d[1]) return;
   const u24 = i => d[i] | (d[i + 1] << 8) | (d[i + 2] << 16);
   agcState = {current: d[3], ledDac: d[4], ambDac: d[5], state: d[6] & 15, led: d[6] >> 4,
-              rawLed: u24(7), rawAmb: u24(10)};
+              rawLed: u24(7), rawAmb: u24(10), bpm: (d[13] | (d[14] << 8)) / 10, conf: d[15],
+              fs: (d[16] | (d[17] << 8)) / 100, motion: d[18]};
   for (let k = 0; k < d[1]; k++) {
     const raw = u24(HEADER + 3 * k);
     let v = raw & 0x1fffff;
@@ -336,13 +337,19 @@ function render() {
     $('level').style.width = `${Math.max(0, Math.min(100, 100 * mean / FULL))}%`;
     $('rawinfo').textContent = `${Math.round(mean)}`;
     const sat = Math.max(...last) > FULL * 0.97;
-    const [bpm, r] = heartRate(ac);
+    const [appBpm, appR] = heartRate(ac);
+    const ring = agcState && agcState.bpm ? agcState : null;
+    const bpm = ring ? ring.bpm : appBpm * (agcState ? agcState.fs / FS : 1);
+    const r = ring ? ring.conf / 100 : appR;
+    const moving = agcState && agcState.motion > 12;  // > ~100 mg per 100 ms
     const conf = $('conf');
+    const check = appBpm ? ` (app: ${(appBpm * (agcState ? agcState.fs / FS : 1)).toFixed(0)})` : '';
     if (led === 'off') { $('bpm').textContent = '--'; conf.textContent = 'LED off'; }
     else if (sat) { $('bpm').textContent = '--'; conf.textContent = 'Saturated: lower the brightness'; }
+    else if (moving) { $('bpm').textContent = '--'; conf.textContent = 'Moving: keep the hand still'; }
     else if (bpm && r > 0.45) {
       $('bpm').textContent = Math.round(bpm);
-      conf.textContent = `confidence ${(r * 100).toFixed(0)}%`;
+      conf.textContent = `${ring ? 'ring' : 'app'} confidence ${(r * 100).toFixed(0)}%${check}`;
       // beat the heart once per period
       const now = performance.now();
       if (now - lastBeat > 60000 / bpm) {
@@ -363,7 +370,7 @@ function render() {
     const a = agcState;
     $('agcinfo').textContent = `Ring: ${AGC_STATES[a.state] || a.state}, current ${a.current} ` +
       `(${(a.current * 200 / 255).toFixed(1)} mA), LED offset ${a.ledDac}, ambient offset ${a.ambDac}, ` +
-      `raw LED ${a.rawLed}, raw ambient ${a.rawAmb}`;
+      `raw LED ${a.rawLed}, raw ambient ${a.rawAmb}, sample rate ${a.fs.toFixed(2)} Hz, motion ${a.motion * 8} mg`;
     if (a.state && current !== a.current) { current = a.current; showLed(); }
   }
   if (other.length) $('otherinfo').textContent = `${other[other.length - 1]}`;

@@ -48,6 +48,9 @@ void ppg_set_led(uint8_t led);
 // keeping the raw LED reading in 150k-350k. Disable it to set registers by hand.
 void ppg_agc_enable(bool enable);
 
+// Motion level for the packets (the caller reads the accelerometer)
+void ppg_set_motion(uint8_t level);
+
 // Stock "off" setup: sampling off, chip asleep
 void ppg_stop(void);
 
@@ -60,9 +63,13 @@ void ppg_stop(void);
 //   [6]      bits 3:0 AGC state (enum ppg_agc_state), bits 7:4 LED (PPG_LED_* >> 4)
 //   [7..9]   raw LED reading (phase 2, registers 0x08-0x0a), unsigned, little endian
 //   [10..12] raw ambient reading (phase 3, registers 0x0b-0x0d)
-//   [13..]   n FIFO samples (register 0x41), 3 bytes each, raw, little endian
-//            (bits 20:0 signed value, bits 22:21 phase flag)
-#define PPG_HEADER      13
+//   [13..14] heart rate in 1/10 bpm (0: not enough data), computed on the ring
+//   [15]     heart rate confidence 0-100 (> 50: clear pulse)
+//   [16..17] measured sample rate per channel in 1/100 Hz
+//   [18]     motion level (accelerometer, 8 mg units, see ppg_set_motion())
+//   [19..]   n FIFO samples (register 0x41), 3 bytes each, raw, little endian
+//            (bits 20:0 signed value, bits 22:21 phase flag: 1 = LED channel)
+#define PPG_HEADER      19
 #define PPG_MAX_SAMPLES 16
 #define PPG_PACKET_MAX  (PPG_HEADER + 3 * PPG_MAX_SAMPLES)
 

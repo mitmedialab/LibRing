@@ -491,7 +491,29 @@ void user_ppg_config(const uint8_t *value, uint16_t len) {
     }
 }
 
+// Motion level for the PPG packets: largest change of the acceleration between two
+// main timer ticks (100 ms) over the last second, in 8 mg units
+static uint8_t ppg_motion(void) {
+    static accel_data_t prev;
+    static uint8_t history[10], idx;
+    accel_data_t a = g_last_accel_mg;
+    int32_t d = (a.x > prev.x ? a.x - prev.x : prev.x - a.x)
+              + (a.y > prev.y ? a.y - prev.y : prev.y - a.y)
+              + (a.z > prev.z ? a.z - prev.z : prev.z - a.z);
+    prev = a;
+    history[idx] = d / 8 > 255 ? 255 : (uint8_t)(d / 8);
+    idx = (idx + 1) % 10;
+    uint8_t level = 0;
+    for (int i = 0; i < 10; i++) {
+        if (history[i] > level) {
+            level = history[i];
+        }
+    }
+    return level;
+}
+
 static void ppg_poll(void) {
+    ppg_set_motion(ppg_motion());
     if (ppg_hold) {
         ppg_hold--;
         return;
