@@ -341,7 +341,7 @@ function render() {
     const ring = agcState && agcState.bpm ? agcState : null;
     const bpm = ring ? ring.bpm : appBpm * (agcState ? agcState.fs / FS : 1);
     const r = ring ? ring.conf / 100 : appR;
-    const moving = agcState && agcState.motion > 12;  // > ~100 mg per 100 ms
+    const moving = agcState && agcState.motion > 25;  // > 200 mg: at rest <= ~100 mg (noise), a hand move >= ~400 mg
     const conf = $('conf');
     const check = appBpm ? ` (app: ${(appBpm * (agcState ? agcState.fs / FS : 1)).toFixed(0)})` : '';
     if (led === 'off') { $('bpm').textContent = '--'; conf.textContent = 'LED off'; }
