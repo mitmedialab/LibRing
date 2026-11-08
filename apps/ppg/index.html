@@ -125,7 +125,7 @@
 
   <div class="panel">
     <details>
-      <summary>Advanced: registers, GPIO, log</summary>
+      <summary>Advanced: registers, log</summary>
 
       <h2>Registers (TYHX HX3918, hex)</h2>
       <div class="row" style="margin-bottom:8px">
@@ -147,23 +147,6 @@
         to 0x<input id="sto" value="40"> step <input id="sstep" value="8"> every
         <input id="sdelay" value="1000"> ms
         <button id="sweep" disabled>Sweep</button>
-      </div>
-
-      <h2>GPIO test</h2>
-      <div class="row">
-        <select id="gpin">
-          <option value="3,0">P3_0 (no known use)</option>
-          <option value="1,4">P1_4 (SWD clock)</option>
-          <option value="0,4">P0_4 (debug UART TX)</option>
-          <option value="0,7">P0_7 (charging input, read only)</option>
-          <option value="0,1">P0_1 (battery ADC, read only)</option>
-        </select>
-        <button class="gpio" data-mode="0" disabled>pull-down</button>
-        <button class="gpio" data-mode="1" disabled>pull-up</button>
-        <button class="gpio" data-mode="2" disabled>floating</button>
-        <button class="gpio" data-mode="3" disabled>out low</button>
-        <button class="gpio" data-mode="4" disabled>out high</button>
-        <button class="gpio" data-mode="5" disabled>restore</button>
       </div>
 
       <h2>Log</h2>
@@ -227,19 +210,10 @@ async function readRegs(reg, n) {
     return Array.from(v.slice(3));
   });
 }
-async function gpioTest(port, pin, mode) {
-  return gatt(async () => {
-    await ppg.writeValueWithResponse(new Uint8Array([0xfd, port, pin, mode]));
-    await new Promise(r => setTimeout(r, 300));
-    const v = new Uint8Array((await ppg.readValue()).buffer);
-    if (v.length !== 5 || v[0] !== 0xfd || v[4] === 0xff) throw new Error('refused by the firmware');
-    return v[4];
-  });
-}
 
 function onPacket(event) {
   const d = new Uint8Array(event.target.value.buffer);
-  // register / GPIO read results also come here (readValue fires this event)
+  // register read results also come here (readValue fires this event)
   if (d.length < HEADER || d.length !== HEADER + 3 * d[1]) return;
   const u24 = i => d[i] | (d[i + 1] << 8) | (d[i + 2] << 16);
   agcState = {current: d[3], ledDac: d[4], ambDac: d[5], state: d[6] & 15, led: d[6] >> 4,
@@ -461,7 +435,6 @@ async function restart() {
 }
 function setConnected(on) {
   for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep']) $(id).disabled = !on;
-  document.querySelectorAll('button.gpio').forEach(b => { b.disabled = !on; });
   $('connect').disabled = on;
 }
 async function connect() {
@@ -532,13 +505,6 @@ $('read').onclick = async () => {
   try { log(`read 0x${hex(r)}..: ${(await readRegs(r, n)).map(hex).join(' ')}`); } catch (e) { log(`read failed: ${e.message}`); }
 };
 $('sweep').onclick = sweep;
-document.querySelectorAll('button.gpio').forEach(b => {
-  b.onclick = async () => {
-    const [port, pin] = $('gpin').value.split(',').map(Number);
-    try { log(`P${port}_${pin} ${b.textContent}: reads ${await gpioTest(port, pin, Number(b.dataset.mode))}`); }
-    catch (e) { log(`P${port}_${pin} ${b.textContent}: ${e.message}`); }
-  };
-});
 buildRegs();
 showLed();
 if (!navigator.bluetooth) status('Web Bluetooth not available: use Chrome or Edge', 'err');

@@ -21,7 +21,7 @@
 bool hx3605_read_regs(uint8_t reg, uint8_t *buf, uint8_t len);
 bool hx3605_write_reg(uint8_t reg, uint8_t value);
 
-// ---- Streaming (branch ppg, step 2) ----
+// ---- Streaming ----
 // The setup is the one of the stock firmware (Stock_V160.bin), recorded by emulating
 // its heart-rate mode (25 Hz, FIFO). It leaves the green LED (phase 2 current, 0x28)
 // at 0: the stock firmware's gain control raises it during a measurement. ~2 (1.6 mA)
@@ -77,23 +77,5 @@ enum ppg_agc_state { PPG_AGC_OFF, PPG_AGC_START, PPG_AGC_CURRENT, PPG_AGC_OFFSET
 
 // Fills packet, returns its length (0 on an I2C error)
 uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX]);
-
-// ---- Probe (branch ppg, step 1) ----
-#define PPG_PROBE_LEN 29
-
-// Fills out[PPG_PROBE_LEN]:
-//   [0]      0x50 ('P'): probe done
-//   [1..15]  I2C bus scan, 1 bit per 7-bit address 0x08..0x77 (bit i of byte
-//            1 + (addr - 8) / 8 = address addr), set if the address ACKs a 1-byte read
-//   [16]     chip ID before waking the chip (0xFF + flag bit 0 if the read failed)
-//   [17]     chip ID after writing 0x01 = 0x00 and waiting 5 ms
-//   [18]     flags: bit 0 read before wake failed, bit 1 wake write failed,
-//            bit 2 read after wake failed, bit 3 register dump failed,
-//            bit 4 sleep write failed
-//   [19..26] registers 0x01..0x08 after wake (burst read)
-//   [27]     accelerometer WHO_AM_I after the probe (0x11 for the SC7A20)
-//   [28]     I2C target address after the probe (0x18 expected)
-// The chip is put back to sleep (0x01 = 0x01) at the end.
-void ppg_probe(uint8_t out[PPG_PROBE_LEN]);
 
 #endif // _HX3605_H_

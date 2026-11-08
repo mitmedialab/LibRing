@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stream the raw PPG (heart rate sensor) data of a ring running the ppg branch.
+"""Stream the raw PPG (heart rate sensor) data of a ring running our firmware.
 
   ppg_stream.py ADDRESS [--time 20] [--write REG=VAL ...] [--read REG,N ...] [--csv out.csv]
 
@@ -86,7 +86,7 @@ async def main():
         now = time.monotonic()
         t0 = t0 or now
         if len(data) < HEADER or len(data) != HEADER + 3 * data[1]:
-            return  # register/GPIO read result (characteristic value), not a packet
+            return  # register read result (characteristic value), not a packet
         seq, count, samples = decode(bytes(data))
         packets.append((now - t0, seq, count, samples))
         fifo.extend(samples)

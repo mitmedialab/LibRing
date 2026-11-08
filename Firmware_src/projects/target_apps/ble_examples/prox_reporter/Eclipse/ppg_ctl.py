@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive control of the PPG (heart-rate sensor) of a ring running the ppg branch.
+"""Interactive control of the PPG (heart-rate sensor) of a ring running our firmware.
 
   ppg_ctl.py ADDRESS
 
@@ -12,9 +12,6 @@ The sensor runs (stock heart-rate setup) while connected. Commands (hex values):
   stats [S]                  mean/std/min/max of each phase over the last S s (2)
   mon                        toggle a per-second status line
   restart                    stop + start the sensor (replays the stock setup)
-  gpio PORT PIN MODE         GPIO test, modes: pd pu in low high restore  e.g. gpio 3 0 high
-  gpioscan [S]               for each test pin: check that nothing drives it (pull-up/down),
-                             then toggle it high/low (S s each, twice) while you watch the LEDs
   q                          quit
 Requires: pip install bleak
 """
@@ -44,7 +41,7 @@ def on_data(_, data):
     global count_reg
     d = bytes(data)
     if len(d) < HEADER or len(d) != HEADER + 3 * d[1]:
-        return  # register or GPIO read result (BlueZ reports reads as notifications too)
+        return  # register read result (BlueZ reports reads as notifications too)
     count_reg = d[2]
     now = time.monotonic()
     for k in range(d[1]):
@@ -83,39 +80,6 @@ async def read(client, reg, n):
     if len(v) != 3 + n or v[0] != 0xFE or v[1] != reg:
         raise RuntimeError("unexpected read result")
     return v[3:]
-
-
-GPIO_MODES = {"pd": 0, "pu": 1, "in": 2, "low": 3, "high": 4, "restore": 5}
-# pins accepted by the firmware (gpio_test_pins in user_proxr.c): (port, pin, may drive)
-GPIO_PINS = [(3, 0, True), (1, 4, True), (0, 4, True), (0, 7, False), (0, 1, False)]
-
-
-async def gpio(client, port, pin, mode):
-    await client.write_gatt_char(PPG, bytes([0xFD, port, pin, GPIO_MODES[mode]]), response=True)
-    await asyncio.sleep(0.3)
-    v = bytes(await client.read_gatt_char(PPG))
-    if len(v) != 5 or v[0] != 0xFD or v[4] == 0xFF:
-        raise RuntimeError(f"P{port}_{pin} {mode}: refused by the firmware")
-    return v[4]
-
-
-async def gpioscan(client, secs):
-    for port, pin, drive in GPIO_PINS:
-        name = f"P{port}_{pin}"
-        pd = await gpio(client, port, pin, "pd")
-        pu = await gpio(client, port, pin, "pu")
-        fl = await gpio(client, port, pin, "in")
-        follows = pd == 0 and pu == 1
-        print(f"{name}: pull-down -> {pd}, pull-up -> {pu}, floating -> {fl}: "
-              + ("not driven by anything" if follows else f"held at {pd} by the board"), flush=True)
-        if follows and drive:
-            for _ in range(2):
-                for level in ("high", "low"):
-                    await gpio(client, port, pin, level)
-                    print(f"  {name} {level.upper():4s} now - look at the ring", flush=True)
-                    await asyncio.sleep(secs)
-                    print(f"     {stats(secs * 0.8)}", flush=True)
-        await gpio(client, port, pin, "restore")
 
 
 async def monitor(flag):
@@ -184,11 +148,6 @@ async def main():
                     print(stats(float(args[0]) if args else 2.0))
                 elif cmd == "mon":
                     mon["on"] = not mon["on"]
-                elif cmd == "gpio":
-                    level = await gpio(client, int(args[0]), int(args[1]), args[2])
-                    print(f"P{args[0]}_{args[1]} {args[2]}: reads {level}")
-                elif cmd == "gpioscan":
-                    await gpioscan(client, float(args[0]) if args else 3.0)
                 elif cmd == "restart":
                     await client.stop_notify(PPG)
                     await asyncio.sleep(0.3)
