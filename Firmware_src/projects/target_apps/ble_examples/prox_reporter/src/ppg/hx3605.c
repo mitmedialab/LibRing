@@ -352,9 +352,15 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
         hx3605_write_reg(HX3605_REG_FIFO_CTRL, ctrl);
         fifo_first_read = true;
     }
-    // LED channel samples (phase flag 1) -> sample rate, heart rate
+    // LED channel samples (phase flag 1) -> sample rate, heart rate. While the hand
+    // moves, the samples are dropped: the pulse is lost in the motion artifacts, and
+    // they would spoil the heart rate for the next 8 s (its window)
     uint32_t led_samples = 0;
     bool settled = agc.state == PPG_AGC_LOCKED || agc.state == PPG_AGC_OFF;
+    bool moving = motion_level > PPG_MOTION_MAX;
+    if (moving) {
+        hr_restart();
+    }
     for (int k = 0; k < n; k++) {
         const uint8_t *p = &packet[PPG_HEADER + 3 * k];
         uint32_t raw = p[0] | (p[1] << 8) | ((uint32_t)p[2] << 16);
@@ -366,14 +372,14 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
         if (v & 0x100000) {
             v -= 0x200000;
         }
-        if (settled && agc.led != PPG_LED_OFF) {
+        if (settled && !moving && agc.led != PPG_LED_OFF) {
             ppg_hr_add(v);
         }
     }
     fs_update(led_samples);
     if (++hr_polls >= 10) { // ~1 s
         hr_polls = 0;
-        ppg_hr_compute(fs_x100, &hr_bpm_x10, &hr_confidence);
+        ppg_hr_update(fs_x100, &hr_bpm_x10, &hr_confidence);
     }
 
     read_phases();

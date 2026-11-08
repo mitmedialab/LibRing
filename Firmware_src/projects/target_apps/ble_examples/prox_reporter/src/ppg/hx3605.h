@@ -50,6 +50,9 @@ void ppg_agc_enable(bool enable);
 
 // Motion level for the packets (the caller reads the accelerometer)
 void ppg_set_motion(uint8_t level);
+// Above this motion level the hand moves (25 x 8 = 200 mg; at rest <= ~100 mg): the
+// heart rate restarts
+#define PPG_MOTION_MAX 25
 
 // Stock "off" setup: sampling off, chip asleep
 void ppg_stop(void);
@@ -63,8 +66,9 @@ void ppg_stop(void);
 //   [6]      bits 3:0 AGC state (enum ppg_agc_state), bits 7:4 LED (PPG_LED_* >> 4)
 //   [7..9]   raw LED reading (phase 2, registers 0x08-0x0a), unsigned, little endian
 //   [10..12] raw ambient reading (phase 3, registers 0x0b-0x0d)
-//   [13..14] heart rate in 1/10 bpm (0: not enough data), computed on the ring
-//   [15]     heart rate confidence 0-100 (> 50: clear pulse)
+//   [13..14] heart rate in 1/10 bpm, computed on the ring; 0: no clear pulse, moving,
+//            or not enough data yet (5 s), see ppg_hr_update()
+//   [15]     heart rate confidence 0-100 (>= 50: clear pulse; 0: not enough data)
 //   [16..17] measured sample rate per channel in 1/100 Hz
 //   [18]     motion level (accelerometer, 8 mg units, see ppg_set_motion())
 //   [19..]   n FIFO samples (register 0x41), 3 bytes each, raw, little endian

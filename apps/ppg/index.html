@@ -312,16 +312,20 @@ function render() {
     $('rawinfo').textContent = `${Math.round(mean)}`;
     const sat = Math.max(...last) > FULL * 0.97;
     const [appBpm, appR] = heartRate(ac);
-    const ring = agcState && agcState.bpm ? agcState : null;
-    const bpm = ring ? ring.bpm : appBpm * (agcState ? agcState.fs / FS : 1);
-    const r = ring ? ring.conf / 100 : appR;
-    const moving = agcState && agcState.motion > 25;  // > 200 mg: at rest <= ~100 mg (noise), a hand move >= ~400 mg
+    // The ring computes the heart rate: 0 without a clear pulse (confidence < 50), while
+    // the hand moves (> 200 mg) and for 5 s after (its samples are dropped). The app's own
+    // estimate is only a cross-check (or the value, without ring data)
+    const ring = agcState && agcState.fs > 0;
+    const scale = agcState ? agcState.fs / FS : 1;
+    const bpm = ring ? agcState.bpm : appBpm * scale;
+    const r = ring ? agcState.conf / 100 : appR;
+    const moving = ring && agcState.motion > 25;  // > 200 mg: at rest <= ~100 mg (noise), a hand move >= ~400 mg
     const conf = $('conf');
-    const check = appBpm ? ` (app: ${(appBpm * (agcState ? agcState.fs / FS : 1)).toFixed(0)})` : '';
+    const check = appBpm ? ` (app: ${(appBpm * scale).toFixed(0)})` : '';
     if (led === 'off') { $('bpm').textContent = '--'; conf.textContent = 'LED off'; }
     else if (sat) { $('bpm').textContent = '--'; conf.textContent = 'Saturated: lower the brightness'; }
     else if (moving) { $('bpm').textContent = '--'; conf.textContent = 'Moving: keep the hand still'; }
-    else if (bpm && r > 0.45) {
+    else if (bpm && (ring || r > 0.45)) {
       $('bpm').textContent = Math.round(bpm);
       conf.textContent = `${ring ? 'ring' : 'app'} confidence ${(r * 100).toFixed(0)}%${check}`;
       // beat the heart once per period
@@ -333,7 +337,8 @@ function render() {
       }
     } else {
       $('bpm').textContent = '--';
-      conf.textContent = raw.length < 6 * FS ? 'Measuring…' : 'No clear pulse: keep still, ring on the finger';
+      conf.textContent = (ring ? agcState.conf === 0 : raw.length < 6 * FS) ? 'Measuring…'
+        : `No clear pulse (confidence ${(r * 100).toFixed(0)}%): keep still, ring snug on the finger`;
     }
     if (ac.length) {
       const recent = ac.slice(-4 * FS);

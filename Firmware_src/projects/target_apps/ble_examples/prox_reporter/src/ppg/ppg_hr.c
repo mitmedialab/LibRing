@@ -13,11 +13,14 @@ static int32_t buf[HR_BUF];   // circular
 static uint16_t head, count;
 static int32_t work[HR_BUF];  // window, then pulse signal
 static int32_t ac[HR_BUF];    // drift removed (static: the stack is small)
+static uint16_t last_bpm_x10; // last estimate with a clear pulse
+static uint8_t last_age;      // ppg_hr_update() calls since then
 
 void ppg_hr_reset(void)
 {
     head = 0;
     count = 0;
+    last_bpm_x10 = 0;
 }
 
 void ppg_hr_add(int32_t sample)
@@ -131,4 +134,17 @@ void ppg_hr_compute(uint16_t fs_x100, uint16_t *bpm_x10, uint8_t *confidence)
     float bpm = 60.0f * fs_x100 / 100.0f / (best + delta);
     *bpm_x10 = (uint16_t)(bpm * 10 + 0.5f);
     *confidence = r_best >= 1 ? 100 : (uint8_t)(r_best * 100);
+}
+
+void ppg_hr_update(uint16_t fs_x100, uint16_t *bpm_x10, uint8_t *confidence)
+{
+    uint16_t bpm;
+    ppg_hr_compute(fs_x100, &bpm, confidence);
+    if (bpm && *confidence >= PPG_HR_CONF_MIN) {
+        last_bpm_x10 = bpm;
+        last_age = 0;
+    } else if (last_bpm_x10 && ++last_age > PPG_HR_HOLD) {
+        last_bpm_x10 = 0;
+    }
+    *bpm_x10 = last_bpm_x10;
 }
