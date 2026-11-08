@@ -179,13 +179,13 @@ static const struct advertise_configuration user_adv_conf = {
  *    - The maximum length of the user defined response data shall be 31 bytes.
  ****************************************************************************************
  */
-/// Advertising data
-#define USER_ADVERTISE_DATA         ("\x03"\
-                                    ADV_TYPE_COMPLETE_LIST_16BIT_SERVICE_IDS\
-                                    ADV_UUID_SUOTAR_SERVICE)
+/// Advertising data: SUOTA service UUID + firmware version (git commit), defined in
+/// firmware_version.c (the only file rebuilt when the commit changes)
+extern const uint8_t user_adv_data[13];
+#define USER_ADVERTISE_DATA         user_adv_data
 
 /// Advertising data length - maximum 28 bytes, 3 bytes are reserved to set
-#define USER_ADVERTISE_DATA_LEN               (sizeof(USER_ADVERTISE_DATA)-1)
+#define USER_ADVERTISE_DATA_LEN     (sizeof(user_adv_data))
 
 /// Scan response data
 #define USER_ADVERTISE_SCAN_RESPONSE_DATA     ""

@@ -99,9 +99,27 @@ def with_bd_address(image, address):
     return bytes(out)
 
 
+# Our firmware's manufacturer data (src/firmware_version.c): company ID 0xFFFF, commit
+# hash (4 bytes, big-endian), flags (bit 0: uncommitted changes, bit 1: unknown)
+VERSION_COMPANY_ID = 0xFFFF
+
+
+def advertised_version(adv):
+    """Commit our firmware was built from (e.g. '446f379', '446f379+' if modified),
+    'unknown' if built without git, else None (stock firmware, older builds)."""
+    data = adv.manufacturer_data.get(VERSION_COMPANY_ID)
+    if data is None or len(data) != 5:
+        return None
+    if data[4] & 0x02:
+        return "unknown"
+    return data[:4].hex()[:7] + ("+" if data[4] & 0x01 else "")
+
+
 def advertised_product_id(adv):
     """Product ID from stock firmware manufacturer data (e.g. ...6F 00010017 00), else None."""
     for company_id, data in adv.manufacturer_data.items():
+        if company_id == VERSION_COMPANY_ID and len(data) == 5:
+            continue  # our firmware version, not a product ID
         raw = struct.pack("<H", company_id) + data
         for tail in (raw[-4:], raw[-5:-1]):  # 0001XXXX, optionally followed by 1 byte
             if len(tail) == 4 and tail[:3] == b"\x00\x01\x00":
@@ -149,16 +167,17 @@ async def scan(args):
         pid = advertised_product_id(adv)
         if args.product_id is not None and pid != args.product_id:
             continue
-        rings.append((adv.rssi, dev, name, pid))
+        rings.append((adv.rssi, dev, name, pid, advertised_version(adv)))
     rings.sort(key=lambda r: r[0], reverse=True)
     return rings
 
 
 def print_rings(rings):
-    print(f"{'address':17s}  {'rssi':>4s}  {'name':12s}  product ID")
-    for rssi, dev, name, pid in rings:
+    print(f"{'address':17s}  {'rssi':>4s}  {'name':12s}  {'product ID':10s}  firmware")
+    for rssi, dev, name, pid, version in rings:
         pid_str = f"0x{pid:02X}" if pid is not None else "-"
-        print(f"{dev.address:17s}  {rssi:4d}  {name:12s}  {pid_str}")
+        fw = f"commit {version}" if version else ("stock" if pid is not None else "-")
+        print(f"{dev.address:17s}  {rssi:4d}  {name:12s}  {pid_str:10s}  {fw}")
 
 
 async def flash(dev, image, args, stock_firmware):
@@ -297,7 +316,7 @@ async def main():
     if args.set_address and len(targets) > 1:
         sys.exit("--set-address needs a single ring (don't use it with --all)")
     failed = []
-    for n, (rssi, dev, name, pid) in enumerate(targets, 1):
+    for n, (rssi, dev, name, pid, _) in enumerate(targets, 1):
         print(f"\n[{n}/{len(targets)}] {dev.address} {name} (rssi {rssi})")
         if pid is not None and pid != image_pid and not args.force:
             print(f"  skipped: ring product ID 0x{pid:02X}, image built for 0x{image_pid:02X}"

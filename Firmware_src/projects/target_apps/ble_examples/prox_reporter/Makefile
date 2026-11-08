@@ -24,6 +24,18 @@ SDK      := ../../../../sdk
 THIRDPTY := ../../../../third_party
 PROJ_SRC := src
 
+# ── Firmware version ──────────────────────────────────────────────────────────
+# Commit of the build, advertised by the ring (src/firmware_version.c, shown by make
+# scan). The header is only rewritten when it changes, so that a new commit rebuilds
+# firmware_version.c alone. Dirty = uncommitted changes under Firmware_src/.
+GIT_HASH  := $(shell git rev-parse HEAD 2>/dev/null | cut -c1-8)
+GIT_DIRTY := $(shell git diff --quiet HEAD -- ../../../.. 2>/dev/null || echo 1)
+VERSION_H := $(OUTDIR)/git_version.h
+VERSION_TEXT := \#define GIT_HASH 0x$(or $(GIT_HASH),0)u\n\#define GIT_DIRTY $(or $(GIT_DIRTY),0)
+ifneq ($(MAKECMDGOALS),clean)
+$(shell mkdir -p $(OUTDIR) && printf '$(VERSION_TEXT)\n' | cmp -s - $(VERSION_H) || printf '$(VERSION_TEXT)\n' > $(VERSION_H))
+endif
+
 # ── Compiler flags ───────────────────────────────────────────────────────────
 ARCH_FLAGS := -mcpu=cortex-m0 -mthumb
 
@@ -56,6 +68,7 @@ INCLUDES := $(addprefix -I,$(sort $(dir $(shell \
     -not -path "*/Keil_5/*"       \
     -not -path "*/scatterfiles/*" \
     -not -path "*/output/*"))))
+INCLUDES += -I$(OUTDIR)
 
 # ── Source files ──────────────────────────────────────────────────────────────
 # Explicit directory list controls which SDK modules are compiled.
