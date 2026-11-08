@@ -8,6 +8,7 @@ Requires: pip install bleak
   suota_flash.py output.bin --name LibRing       only rings named *LibRing* (custom firmware)
   suota_flash.py output.bin --min-rssi -55       only rings close to the computer
   suota_flash.py output.bin --address AA:BB:...  one specific ring
+  suota_flash.py output.bin --ring C7 --ring 72  the rings named LibRing_C7 and LibRing_72
   suota_flash.py output.bin --all                every matching ring, one after the other
 
 Rings running the stock firmware advertise their product ID (manufacturer data containing
@@ -133,18 +134,31 @@ def looks_like_ring(dev, adv):
             or (dev.name or adv.local_name) in ("LibRing", "TEST"))  # TEST: before the rename
 
 
+def ring_name(name):
+    """--ring value -> advertised name, upper case: 'c7' or 'LibRing_C7' -> 'LIBRING_C7'."""
+    name = name.upper()
+    return name if name.startswith("LIBRING_") else "LIBRING_" + name
+
+
 async def scan(args):
     found = {}
     seen = asyncio.Event()
+    wanted = {ring_name(r) for r in args.ring or ()}
+    seen_names = set()
 
     def on_adv(dev, adv):
         found[dev.address] = (dev, adv)
         if args.address and dev.address.upper() == args.address.upper():
             seen.set()
+        name = (adv.local_name or dev.name or "").upper()
+        if name in wanted:
+            seen_names.add(name)
+            if seen_names == wanted:
+                seen.set()
 
     async with BleakScanner(on_adv):
-        if args.address:
-            # stop as soon as the ring is seen (+1 s for its scan response)
+        if args.address or wanted:
+            # stop as soon as the ring(s) are seen (+1 s for scan responses)
             try:
                 await asyncio.wait_for(seen.wait(), args.scan_time)
                 await asyncio.sleep(1)
@@ -159,6 +173,8 @@ async def scan(args):
         if args.address and dev.address.upper() != args.address.upper():
             continue
         if args.name and args.name.lower() not in name.lower():
+            continue
+        if wanted and name.upper() not in wanted:
             continue
         if not args.address and not args.name and not looks_like_ring(dev, adv):
             continue
@@ -262,6 +278,9 @@ async def main():
     parser.add_argument("--scan", action="store_true", help="only list the matching rings")
     parser.add_argument("--name", help="advertised name contains this (case-insensitive)")
     parser.add_argument("--address", help="BLE address of one ring")
+    parser.add_argument("--ring", action="append", metavar="NAME",
+                        help="ring named exactly NAME, e.g. LibRing_C7 or C7 (repeat for several; "
+                             "flashes all of them)")
     parser.add_argument("--min-rssi", type=int, default=-100, help="ignore rings with a weaker signal (e.g. -55)")
     parser.add_argument("--product-id", type=lambda x: int(x, 16), help="only stock rings advertising this ID (hex)")
     parser.add_argument("--all", action="store_true", help="flash every matching ring instead of the nearest one")
@@ -303,16 +322,22 @@ async def main():
 
     if args.address:
         print(f"Looking for {args.address} (up to {args.scan_time:g} s)...")
+    elif args.ring:
+        names = sorted({ring_name(r) for r in args.ring})
+        print(f"Looking for {', '.join('LibRing_' + n[8:] for n in names)} (up to {args.scan_time:g} s)...")
     else:
         print(f"Scanning for {args.scan_time:g} s...")
     rings = await scan(args)
+    missing = sorted({ring_name(r) for r in args.ring or ()} - {r[2].upper() for r in rings})
+    if missing:
+        print(f"Not found: {', '.join('LibRing_' + n[8:] for n in missing)}")
     if not rings:
         sys.exit("No matching ring found (is it advertising, i.e. not connected to another app?)")
     print_rings(rings)
     if args.scan:
         return
 
-    targets = rings if args.all else rings[:1]
+    targets = rings if args.all or args.ring else rings[:1]
     if args.set_address and len(targets) > 1:
         sys.exit("--set-address needs a single ring (don't use it with --all)")
     failed = []

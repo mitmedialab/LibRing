@@ -164,10 +164,21 @@ output.bin: $(OUTDIR)/$(TARGET).bin
 
 # Flash over BLE from this computer (pip install bleak), see Eclipse/suota_flash.py --help.
 # e.g. make flash                          nearest ring
+#      make flash LibRing_C7 LibRing_72    these rings (by name, also with scan / images)
 #      make flash FLASH_ARGS="--address 48:23:35:A2:01:57"
 #      make scan
 flash: output.bin
-	python3 Eclipse/suota_flash.py output.bin $(FLASH_ARGS)
+	python3 Eclipse/suota_flash.py output.bin $(RING_ARGS) $(FLASH_ARGS)
+
+# Ring names given as goals (make flash LibRing_C7) -> suota_flash.py --ring LibRing_C7;
+# the names themselves are no-op goals
+RING_GOALS := $(filter LibRing_% libring_% LIBRING_%,$(MAKECMDGOALS))
+RING_ARGS  := $(addprefix --ring ,$(RING_GOALS))
+ifneq ($(RING_GOALS),)
+.PHONY: $(RING_GOALS)
+$(RING_GOALS):
+	@:
+endif
 
 # Every ring in range, one after the other. Rings on our firmware take any PRODUCT_ID
 # (only the stock receiver checks it): stock rings with another ID are skipped, flash
@@ -176,12 +187,12 @@ flash_all: output.bin
 	python3 Eclipse/suota_flash.py output.bin --all $(FLASH_ARGS)
 
 scan:
-	python3 Eclipse/suota_flash.py --scan $(FLASH_ARGS)
+	python3 Eclipse/suota_flash.py --scan $(RING_ARGS) $(FLASH_ARGS)
 
 # One image per ring in range, keeping its BLE address: output_<ADDRESS>.bin (for the
 # Android SUOTA app). Without a ring: make images FLASH_ARGS="--set-address AA:BB:..."
 images: output.bin
-	python3 Eclipse/suota_flash.py output.bin --save --all $(FLASH_ARGS)
+	python3 Eclipse/suota_flash.py output.bin --save --all $(RING_ARGS) $(FLASH_ARGS)
 
 # ── Linker script generation ──────────────────────────────────────────────────
 # Replicates the Eclipse pre-build step from makefile.targets.
