@@ -62,10 +62,25 @@ bool accel_config(void) {
     // config accelerometer
     i2c_abort_t abort_code;
     uint8_t config[2] = {0x20, 0b01010111}; // ctrl reg 1, 0101 = 100hz, 0 = sleep, 111 = enable xyz
-    i2c_master_transmit_buffer_sync(config, sizeof(uint8_t)*2, &abort_code, I2C_F_NONE);
+    // Wait for the STOP: otherwise the next write is appended to this transaction
+    // (the controller only sends STOP when its TX FIFO is empty) and its bytes go to
+    // the following registers of this one
+    i2c_master_transmit_buffer_sync(config, sizeof(uint8_t)*2, &abort_code, I2C_F_WAIT_FOR_STOP);
 
     if (abort_code != I2C_ABORT_NONE) {
         arch_printf("Accelerometer Configuration failed, error: %d\r\n", abort_code);
+        return false;
+    }
+
+    // Range: the rest of the firmware and the web apps assume +-16 g (sens = SENS_16G,
+    // sent with the data), but the range was never set: the chip kept its power-on
+    // default (+-2 g, 8x larger values) or what the stock firmware had set (it stays
+    // powered across MCU resets and updates), so it differed from ring to ring.
+    // CTRL_REG4 = 0xB8: block data update, +-16 g, high resolution
+    uint8_t range[2] = {0x23, 0xB8};
+    i2c_master_transmit_buffer_sync(range, sizeof(range), &abort_code, I2C_F_WAIT_FOR_STOP);
+    if (abort_code != I2C_ABORT_NONE) {
+        arch_printf("Accelerometer range setting failed, error: %d\r\n", abort_code);
         return false;
     }
 
