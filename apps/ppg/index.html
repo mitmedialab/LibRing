@@ -49,6 +49,13 @@
   .trace-head b { color: var(--text); font-weight: 600; }
   canvas { width: 100%; display: block; }
   #cpulse { height: 220px; } #craw { height: 110px; } #cother { height: 80px; } #cspo2 { height: 160px; }
+  #ctacho { height: 140px; } .trend { height: 90px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 10px; }
+  .stat { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .trend-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .trend-head b { color: var(--text); }
   .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
   .meter { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; width: 160px; }
   .meter > div { height: 100%; background: var(--led); width: 0; transition: width .3s; }
@@ -121,6 +128,42 @@
       </div>
     </div>
     <p class="hint" id="rate"></p>
+  </div>
+
+  <div class="panel" id="hrvpanel">
+    <div class="live">
+      <div>
+        <div class="trace-head"><span><b>Heart rate variability</b>: interval between beats (ms), last 2 min</span><span id="hrvcount"></span></div>
+        <canvas id="ctacho"></canvas>
+      </div>
+      <div class="bpm">
+        <div class="value" id="rmssd">--</div>
+        <div class="unit">ms RMSSD</div>
+        <div class="conf" id="hrvinfo">Wear the ring, keep still</div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>SDNN</span><b id="sdnn">--</b></div>
+      <div class="stat"><span>heart rate from beats</span><b id="hrvbpm">--</b></div>
+      <div class="stat"><span>pNN50</span><b id="pnn50">--</b></div>
+      <div class="stat"><span>beats (last minute)</span><b id="hrvn">--</b></div>
+    </div>
+    <p class="hint">Each beat is timed on the green pulse (steepest edge, refined by matching the average pulse
+      shape), only while the pulse is clear and the hand still; deformed beats and intervals off by more than
+      20&nbsp;% from the recent ones are dropped. RMSSD (beat-to-beat changes) and SDNN (spread) over the last minute. At 24 samples
+      per second the timing noise is ~7&nbsp;ms per interval: an estimate, which reads a bit high when the
+      variability is low.</p>
+  </div>
+
+  <div class="panel" id="trendpanel">
+    <div class="trace-head"><span><b>Session</b> (last 10 min, one point per second)</span>
+      <button id="trendclear" style="padding: 2px 10px">Clear</button></div>
+    <div class="trend-head"><span><b style="color: var(--green)">Heart rate</b> (bpm)</span><span id="trendhr"></span></div>
+    <canvas class="trend" id="trhr"></canvas>
+    <div class="trend-head"><span><b style="color: var(--ir)">HRV</b> (RMSSD, ms)</span><span id="trendhrv"></span></div>
+    <canvas class="trend" id="trhrv"></canvas>
+    <div class="trend-head"><span><b style="color: var(--red)">SpO2</b> (%, experimental, SpO2 mode)</span><span id="trendspo2"></span></div>
+    <canvas class="trend" id="trspo2"></canvas>
   </div>
 
   <div class="panel" id="spo2panel">
@@ -213,6 +256,10 @@ let device = null, ppg = null, busy = Promise.resolve();
 const traces = [[], []];       // [other phase (SpO2 mode: dark), LED channel (green - dark)]
 const redT = [], irT = [];     // SpO2 mode: raw red and IR
 let lastDark = 0, leakCal = null;
+let ledCount = 0;              // LED channel samples received (absolute index for the beats)
+const hrv = {lastBeat: -1e9, prev: null, validFrom: 0, ibis: []};   // ibis: {t (ms), ibi (ms)}
+const trend = [];              // one point per second: {hr, rmssd, spo2} (NaN: none)
+const TREND_MAX = 600;         // 10 min
 let sampleCount = 0, rateT0 = 0;
 let led = 'green', current = 2, agcState = null;
 
@@ -262,10 +309,10 @@ function onPacket(event) {
       if (flag === 0) { lastDark = v; push(traces[0], v); }
       else if (flag === 1) push(redT, v);
       else if (flag === 3) push(irT, v);
-      else { push(traces[1], v - lastDark); sampleCount++; }
+      else { push(traces[1], v - lastDark); sampleCount++; ledCount++; }
     } else if (flag <= 1) {      // heart-rate mode: flag 1 = LED channel (green - dark)
       push(traces[flag], v);
-      if (flag === 1) sampleCount++;
+      if (flag === 1) { sampleCount++; ledCount++; }
     }
   }
   if (leakCal) leakStep();
@@ -308,6 +355,158 @@ function heartRate(ac) {
   return lag ? [60 * FS / lag, best] : [null, 0];
 }
 
+// ---- heart rate variability (pure functions, also in apps/ppg/index.html) ----
+// Beats in x: {t: fractional sample index of the steepest edge, q: match with the
+// average pulse shape (correlation, 1 = same shape; deformed beats are unreliable)}.
+// x: LED channel samples (uniform rate fs). Drift removal (centred 1.5 s mean),
+// 3-sample smoothing, central derivative; its polarity is chosen so that the sharper
+// edge (the systolic one) is positive; local maxima above 40 % of its 95th
+// percentile, at least 0.33 s apart (180 bpm), refined by parabolic interpolation.
+function detectBeats(x, fs) {
+  const n = x.length, h = Math.round(0.75 * fs);
+  if (n < 2 * h + 8) return [];
+  const p = new Float64Array(n);
+  let sum = 0;
+  for (let i = 0; i <= 2 * h; i++) sum += x[i];
+  for (let i = h; i < n - h; i++) {
+    p[i] = x[i] - sum / (2 * h + 1);
+    if (i + h + 1 < n) sum += x[i + h + 1] - x[i - h];
+  }
+  const s = new Float64Array(n), d = new Float64Array(n);
+  for (let i = h + 1; i < n - h - 1; i++) s[i] = (p[i - 1] + p[i] + p[i + 1]) / 3;
+  let max = 0, min = 0;
+  for (let i = h + 2; i < n - h - 2; i++) {
+    d[i] = (s[i + 1] - s[i - 1]) / 2;
+    if (d[i] > max) max = d[i];
+    if (d[i] < min) min = d[i];
+  }
+  const sign = -min > max ? -1 : 1;
+  const lo = h + 3, hi = n - h - 3;
+  const vals = [];
+  for (let i = lo; i < hi; i++) { d[i] *= sign; vals.push(d[i]); }
+  if (vals.length < fs) return [];
+  vals.sort((a, b) => a - b);
+  const thr = 0.4 * vals[Math.floor(0.95 * (vals.length - 1))];
+  const minGap = 0.33 * fs, beats = [];
+  for (let i = lo; i < hi; i++) {
+    if (d[i] <= thr || d[i] < d[i - 1] || d[i] < d[i + 1]) continue;
+    const den = d[i - 1] - 2 * d[i] + d[i + 1];
+    let t = i + (den < 0 ? 0.5 * (d[i - 1] - d[i + 1]) / den : 0);
+    const last = beats[beats.length - 1];
+    if (last && t - last.t < minGap) {
+      if (d[i] > last.v) { last.t = t; last.v = d[i]; }
+      continue;
+    }
+    beats.push({t, v: d[i]});
+  }
+  return refineBeats(s, beats.map(b => b.t), fs, lo, hi);
+}
+
+// Sub-sample beat timing from the whole pulse shape: average the pulses around the
+// beats (template), then shift each beat to the best match with it (cross-correlation
+// over +-3 samples, parabolic interpolation), twice. Uses ~0.6 s of signal per beat
+// instead of the 2-3 samples of the steepest edge: ~3x less timing noise.
+function refineBeats(s, beats, fs, lo, hi) {
+  const a = Math.round(0.25 * fs), b = Math.round(0.35 * fs), L = 3;
+  const sample = t => { const i = Math.floor(t), f = t - i; return s[i] * (1 - f) + s[i + 1] * f; };
+  let quality = beats.map(() => 0);
+  for (let pass = 0; pass < 2; pass++) {
+    const tpl = new Float64Array(a + b + 1);
+    let count = 0;
+    for (const t of beats) {
+      if (t - a - L < lo || t + b + L + 1 >= hi) continue;
+      for (let k = -a; k <= b; k++) tpl[k + a] += sample(t + k);
+      count++;
+    }
+    if (count < 3) return beats.map(t => ({t, q: 0}));
+    const mean = tpl.reduce((x, y) => x + y, 0) / tpl.length;
+    let tplNorm = 0;
+    for (let k = 0; k < tpl.length; k++) { tpl[k] -= mean; tplNorm += tpl[k] * tpl[k]; }
+    quality = [];
+    beats = beats.map(t => {
+      if (t - a - L < lo || t + b + L + 1 >= hi) { quality.push(0); return t; }
+      const c = [];
+      for (let lag = -L; lag <= L; lag++) {
+        let sum = 0;
+        for (let k = -a; k <= b; k++) sum += tpl[k + a] * sample(t + lag + k);
+        c.push(sum);
+      }
+      let j = 1;
+      for (let q = 1; q < c.length - 1; q++) if (c[q] > c[j]) j = q;
+      const den = c[j - 1] - 2 * c[j] + c[j + 1];
+      const delta = den < 0 ? 0.5 * (c[j - 1] - c[j + 1]) / den : 0;
+      const tb = t + (j - L) + Math.max(-0.5, Math.min(0.5, delta));
+      // shape match at the new position: correlation with the template
+      let sm = 0, ss = 0, st = 0;
+      for (let k = -a; k <= b; k++) sm += sample(tb + k);
+      sm /= a + b + 1;
+      for (let k = -a; k <= b; k++) { const v = sample(tb + k) - sm; ss += v * v; st += v * tpl[k + a]; }
+      quality.push(ss > 0 && tplNorm > 0 ? st / Math.sqrt(ss * tplNorm) : 0);
+      return tb;
+    });
+  }
+  return beats.map((t, i) => ({t, q: quality[i]}));
+}
+
+// RMSSD, SDNN (ms), mean heart rate and pNN50 of inter-beat intervals (ms)
+function hrvStats(ibi) {
+  const n = ibi.length;
+  if (n < 2) return null;
+  const mean = ibi.reduce((a, b) => a + b, 0) / n;
+  const sdnn = Math.sqrt(ibi.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1));
+  let ss = 0, nn50 = 0;
+  for (let i = 1; i < n; i++) { const dd = ibi[i] - ibi[i - 1]; ss += dd * dd; if (Math.abs(dd) > 50) nn50++; }
+  return {rmssd: Math.sqrt(ss / (n - 1)), sdnn, bpm: 60000 / mean, pnn50: 100 * nn50 / (n - 1), n};
+}
+
+// Interval accepted: physiological (40-180 bpm) and within 20 % of the median of the
+// recent ones, or of `expected` (e.g. from the ring's heart rate) while there are < 4
+function ibiPlausible(ibi, recent, expected) {
+  if (ibi < 333 || ibi > 1500) return false;
+  const m = recent.length >= 4
+    ? recent.slice(-8).sort((a, b) => a - b)[Math.floor(Math.min(recent.length, 8) / 2)] : expected;
+  return !m || Math.abs(ibi - m) < 0.2 * m;
+}
+// ---- end of heart rate variability ----
+
+// Every second: new beats of the last 10 s of the LED channel -> intervals. Only with a
+// clear pulse (the ring reports a heart rate) and a still hand: otherwise the chain of
+// beats is cut (no interval across a gap)
+function updateHrv() {
+  const a = agcState, x = traces[1];
+  const fs = a && a.fs > 5 ? a.fs : FS;
+  if (!ppg || !a || led === 'off' || !a.bpm || a.motion > 25 || x.length < 8 * FS) {
+    hrv.prev = null;
+    hrv.validFrom = ledCount + fs; // the window still holds these samples: skip them
+    return;
+  }
+  const base = ledCount - x.length, now = performance.now();
+  for (const {t: b, q} of detectBeats(x, fs)) {
+    const t = base + b;
+    // away from the window edges (no shape match there), after the last beat
+    if (b < 1.6 * fs || b > x.length - 1.6 * fs || t < hrv.lastBeat + 0.3 * fs || t < hrv.validFrom) continue;
+    hrv.lastBeat = t;
+    if (q < 0.97) { hrv.prev = null; continue; }  // deformed beat: unreliable timing
+    if (hrv.prev !== null) {
+      const ibi = (t - hrv.prev) / fs * 1000;
+      if (ibiPlausible(ibi, hrv.ibis.slice(-8).map(e => e.ibi), 60000 / a.bpm)) hrv.ibis.push({t: now, ibi});
+    }
+    hrv.prev = t;
+  }
+  while (hrv.ibis.length && hrv.ibis[0].t < now - 300000) hrv.ibis.shift();
+}
+function hrvNow() {
+  const now = performance.now();
+  return hrvStats(hrv.ibis.filter(e => e.t > now - 60000).map(e => e.ibi));
+}
+function updateTrend() {
+  const a = agcState, st = hrvNow();
+  trend.push({hr: a && a.bpm && a.motion <= 25 ? a.bpm : NaN,
+              rmssd: st && st.n >= 20 ? st.rmssd : NaN,
+              spo2: a && a.mode === 1 && a.spo2 ? a.spo2 : NaN});
+  if (trend.length > TREND_MAX) trend.shift();
+}
+
 // ---- drawing ----
 function draw(canvas, data, color, opts = {}) {
   const dpr = window.devicePixelRatio || 1;
@@ -334,6 +533,67 @@ function draw(canvas, data, color, opts = {}) {
     i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   });
   ctx.stroke();
+}
+
+// Time series with gaps (NaN) on a fixed span, with its range written on the right
+function drawSeries(canvas, values, color, span, fmt = v => v.toFixed(0)) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
+  for (let s = 1; s < 10; s++) { const x = Math.round(w * s / 10) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  const ok = values.filter(v => Number.isFinite(v));
+  if (!ok.length) return null;
+  let min = Math.min(...ok), max = Math.max(...ok);
+  if (max - min < 1e-6) { max += 1; min -= 1; }
+  const pad = (max - min) * 0.12, x0 = w * (1 - values.length / span);
+  const X = i => x0 + (i / (span - 1)) * w, Y = v => h - ((v - min + pad) / (max - min + 2 * pad)) * h;
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1.8; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  let pen = false;
+  values.forEach((v, i) => {
+    if (!Number.isFinite(v)) { pen = false; return; }
+    pen ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v));
+    pen = true;
+  });
+  ctx.stroke();
+  values.forEach((v, i) => {  // isolated points
+    if (Number.isFinite(v) && !Number.isFinite(values[i - 1]) && !Number.isFinite(values[i + 1])) {
+      ctx.beginPath(); ctx.arc(X(i), Y(v), 1.8, 0, 2 * Math.PI); ctx.fill();
+    }
+  });
+  ctx.fillStyle = css('--muted'); ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'right';
+  ctx.fillText(fmt(max), w - 4, 12); ctx.fillText(fmt(min), w - 4, h - 4);
+  return {min, max, last: ok[ok.length - 1]};
+}
+
+function renderHrv() {
+  const st = hrvNow();
+  const recent = hrv.ibis.slice(-120).map(e => e.ibi);
+  drawSeries($('ctacho'), recent, css('--ir'), 120);
+  $('hrvcount').textContent = recent.length ? `${recent.length} intervals` : '';
+  const enough = st && st.n >= 20;
+  $('rmssd').textContent = enough ? Math.round(st.rmssd) : '--';
+  $('sdnn').textContent = enough ? `${Math.round(st.sdnn)} ms` : '--';
+  $('hrvbpm').textContent = st ? `${st.bpm.toFixed(1)}` : '--';
+  $('pnn50').textContent = enough ? `${Math.round(st.pnn50)} %` : '--';
+  $('hrvn').textContent = st ? st.n + 1 : '--';
+  const a = agcState;
+  $('hrvinfo').textContent = !ppg ? 'Connect, then wear the ring'
+    : a && a.motion > 25 ? 'Moving: keep the hand still'
+    : !a || !a.bpm ? 'Waiting for a clear pulse'
+    : enough ? 'last minute' : `Collecting beats (${st ? st.n : 0} / 20)…`;
+  const fmt1 = v => v.toFixed(1);
+  const show = (id, canvas, key, color, fmt, unit) => {
+    const r = drawSeries($(canvas), trend.map(p => p[key]), css(color), TREND_MAX, fmt);
+    $(id).textContent = r ? `now ${fmt(r.last)} ${unit} · range ${fmt(r.min)}-${fmt(r.max)}` : '';
+  };
+  show('trendhr', 'trhr', 'hr', '--green', fmt1, 'bpm');
+  show('trendhrv', 'trhrv', 'rmssd', '--ir', v => v.toFixed(0), 'ms');
+  show('trendspo2', 'trspo2', 'spo2', '--red', fmt1, '%');
 }
 
 let lastBeat = 0;
@@ -395,6 +655,7 @@ function render() {
   }
   if (other.length) $('otherinfo').textContent = `${other[other.length - 1]}`;
   renderSpo2();
+  renderHrv();
 
   const now = performance.now();
   if (ppg && now - rateT0 > 2000) {
@@ -446,6 +707,7 @@ async function sendLeak() {
 async function setSpo2(on) {
   if (!ppg) return;
   traces[0].length = traces[1].length = redT.length = irT.length = 0;
+  hrv.prev = null;
   await command(CMD_MODE, on ? 1 : 0);  // restarts the ring's gain control
   if (on) await sendLeak();
   log(`SpO2 mode ${on ? 'on' : 'off'}`);
@@ -623,6 +885,8 @@ $('read').onclick = async () => {
 $('sweep').onclick = sweep;
 $('spo2on').onchange = () => setSpo2($('spo2on').checked).catch(e => log(e.message));
 $('leakcal').onclick = () => startLeakCal().catch(e => log(e.message));
+$('trendclear').onclick = () => { trend.length = 0; hrv.ibis.length = 0; hrv.prev = null; };
+setInterval(() => { updateHrv(); if (ppg) updateTrend(); }, 1000);
 buildRegs();
 showLed();
 if (!navigator.bluetooth) status('Web Bluetooth not available: use Chrome or Edge', 'err');
