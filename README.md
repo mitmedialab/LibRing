@@ -24,6 +24,19 @@ With this firmware, the ring streams its sensors over Bluetooth Low Energy (BLE)
 | Heart Rate, HRV & SpO2 (experimental) | Pulse waveform, heart rate computed on the ring, heart rate variability, session trends, and an uncalibrated SpO2 estimate |
 | Webcam Pulse (experimental) | Heart rate from the laptop webcam, as an independent check of the ring (no ring needed) |
 
+## Install the firmware (from a phone)
+
+1. On an Android phone, download the latest binary from the [releases page](https://github.com/mitmedialab/LibRing/releases/latest):
+   - `LibRing_xxxxxxx_0x4C_2026_rings.bin` for rings bought in 2026
+   - `LibRing_xxxxxxx_0x17_older_rings.bin` for older SR08 rings
+
+   Not sure? Try `0x4C` first: a stock ring rejects the wrong one ("invalid image header") without harm, then use the other. Rings already running LibRing accept both.
+2. Install the Renesas [SUOTA app](https://play.google.com/store/apps/details?id=com.dialog.suota), close the ring's vendor app, and select the ring (`SR08` for a stock ring, `LibRing_XX` after the first update).
+3. Choose the downloaded `.bin`, discard the 1st error/warning, and the **default settings are normally OK** ([screenshot](./docs/OTA_Settings_for_apk.jpg)): block size `240`, image bank `OLDEST`, memory type `SPI`, MISO `P0_5`, MOSI `P0_6`, CS `P0_3`, SCK `P0_0`.
+4. Tap **Send to device** (~1 min): the ring restarts as `LibRing_XX`, ready for the demos.
+
+To build the firmware yourself or flash many rings from a computer, see [Firmware](#firmware-custom-flashed-over-the-air).
+
 ## Using the ring
 
 - **Display**: by default, a "fluid" that flows with the ring's tilt. Hold the touch sensor for 3 s to switch to the ring ID (the 2 hex digits of its name), hold again to turn the display off, again to go back to the fluid. Holding for 10 s resets the ring.
