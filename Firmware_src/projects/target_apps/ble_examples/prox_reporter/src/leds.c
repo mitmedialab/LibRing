@@ -20,6 +20,9 @@ static led_gpios theLedGpiosHigh[] = {
         {GPIO_PORT_2, GPIO_PIN_9},
 };
 
+uint8_t LED_overlay[6];
+uint8_t LED_indicators;
+
 // 7-segment patterns of 0-9 and A-F (b, d lowercase). Segment bits:
 // bit0=A (top), bit1=F (top left), bit2=B (top right), bit3=G (middle),
 // bit4=E (bottom left), bit5=C (bottom right), bit6=D (bottom)
@@ -59,10 +62,11 @@ void LED_Buff_setInt(uint32_t inputNum, unsigned char *LED_Buf, int lenInt) {
 
 void LED_write(unsigned char *LED_Buffer, int line) {
     uint8_t prev_line = (line + 5) % 6;
+    uint8_t bits = LED_Buffer[line] | LED_overlay[line] | (line == 5 ? LED_indicators : 0);
     GPIO_SetActive( theLedGpiosHigh[prev_line].port, theLedGpiosHigh[prev_line].pin );
         for(int i =0;i<7;i++)
     {
-            if((LED_Buffer[line] >> i) & 1)
+            if((bits >> i) & 1)
                     GPIO_SetActive( theLedGpiosLow[i].port, theLedGpiosLow[i].pin );
             else
                     GPIO_SetInactive( theLedGpiosLow[i].port, theLedGpiosLow[i].pin );

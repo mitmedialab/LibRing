@@ -5,7 +5,7 @@ Pinout:
 
 1  P0_0				SPI_FLASH_CLK
 2  P0_1				ADC_INPUT
-3  P0_2				LED_13
+3  P0_2				LED_13 (segment 6, also the green steps indicator)
 4  P0_3				SPI_FLASH_CS
 5  P3_0				
 6  P0_4				UART_TX
@@ -26,7 +26,7 @@ Pinout:
 20 P2_4				I2C_SDA
 
 21 SWITCH xxxx
-22 P1_0				LED_11
+22 P1_0				LED_11 (segment 4, also the red heart indicator)
 23 VBAT xxxx
 24 P1_1				LED_12
 25 SDIO = P1_5		Touch input to low = touched
@@ -44,5 +44,16 @@ Pinout:
 36 P2_7				LED_2
 37 P2_8             LED_1
 38 VDD xxxx
-39 P2_9				LED_6
+39 P2_9				LED_6 (line 5: outside indicators)
 40 P2_0				LED_9
+
+LED matrix (added by LibRing, see Firmware_src/.../prox_reporter/src/leds.c):
+6 lines x 7 segments, multiplexed one line at a time.
+  Lines (theLedGpiosHigh, line 0-5):    P2_8 P2_7 P2_6 P2_5 P2_2 P2_9
+  Segments (theLedGpiosLow, bit 0-6):   P2_1 P1_3 P2_0 P1_2 P1_0 P1_1 P0_2
+  Lines 0-4: the 5 digits (bit 0 A top, 1 F top left, 2 B top right,
+             3 G middle, 4 E bottom left, 5 C bottom right, 6 D bottom).
+  Line 5 (P2_9): the indicators on the outside of the ring:
+    bit 4 (P2_9 + P1_0): red heart
+    bit 6 (P2_9 + P0_2): green steps
+    (bits 0-3 and 5: nothing seen)

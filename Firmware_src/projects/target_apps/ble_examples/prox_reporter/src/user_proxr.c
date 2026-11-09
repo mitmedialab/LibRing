@@ -362,6 +362,12 @@ void user_accel_streaming(bool enable) {
     }
     accel_streaming = enable;
     arch_printf("Accel streaming: %d\r\n", enable);
+    // green "steps" indicator while the accelerometer is streamed
+    if (enable) {
+        LED_indicators |= LED_IND_STEPS;
+    } else {
+        LED_indicators &= ~LED_IND_STEPS;
+    }
 
     if (enable) {
         // Keep the I2C peripheral powered while streaming (sleep turns it off)
@@ -394,7 +400,9 @@ void user_ppg_streaming(bool enable) {
         accel_init();             // I2C controller set up
         ppg_streaming = ppg_start();
         arch_printf("PPG start: %d\r\n", ppg_streaming);
-        if (!ppg_streaming) {
+        if (ppg_streaming) {
+            LED_indicators |= LED_IND_HEART; // red heart indicator while the PPG runs
+        } else {
             arch_restore_sleep_mode();
             return;
         }
@@ -404,6 +412,7 @@ void user_ppg_streaming(bool enable) {
         }
     } else {
         ppg_streaming = false;
+        LED_indicators &= ~LED_IND_HEART;
         ppg_stop();
         arch_restore_sleep_mode();
         arch_printf("PPG stop\r\n");
@@ -421,6 +430,9 @@ void user_ppg_streaming(bool enable) {
 //                       (ppg_set_leak(): the client keeps it, e.g. per ring name)
 //   [0xF8]              measure the SpO2 optical leak (ring off the finger, in the dark)
 //   [0xF7, red, IR]     SpO2 LED currents (0: default)
+//   [0xF6, line, mask]  display test: also light the LEDs of mask (bit i = segment i)
+//                       on line 0-5 (5: P2_9, not used by the display); line 0xFF:
+//                       clear all
 // These command bytes are also trim registers (0xF0-0xFB) of the sensor: they can't
 // be written with [reg, value]. Needs the I2C controller (set up 5 s after boot or
 // by a subscription).
@@ -440,6 +452,12 @@ void user_ppg_config(const uint8_t *value, uint16_t len) {
         ppg_measure_leak();
     } else if (len == 3 && value[0] == 0xF7) {
         ppg_set_spo2_currents(value[1], value[2]);
+    } else if (len == 3 && value[0] == 0xF6) {
+        if (value[1] < 6) {
+            LED_overlay[value[1]] = value[2] & 0x7F;
+        } else {
+            memset(LED_overlay, 0, sizeof(LED_overlay));
+        }
     } else if (len == 2) {
         hx3605_write_reg(value[0], value[1]);
     } else if (len == 3 && value[0] == 0xFE && value[2] <= 16) {
