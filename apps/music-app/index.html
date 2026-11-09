@@ -31,7 +31,7 @@
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
                 <div>
                     <h1 class="mb-0 h2">Web MIDI Interface</h1>
-                    <p class="text-secondary mb-0 small">LibRing accelerometer → MIDI CC</p>
+                    <p class="text-secondary mb-0 small">LibRing accelerometer → MIDI CC, button touch → note or CC</p>
                 </div>
                 <div class="d-flex gap-2 align-items-center">
                     <span id="ble-status" class="badge bg-secondary">BLE: Disconnected</span>
@@ -79,6 +79,22 @@
                                 </div>
                                 <div class="col-6">
                                     <label class="form-label mb-1">
+                                        Button Touch
+                                        <span class="text-secondary small">(0–127)</span>
+                                    </label>
+                                    <div class="input-group">
+                                        <select class="form-select" id="btn-mode" title="Note: note-on / note-off; CC: 127 / 0">
+                                            <option value="note" selected>Note</option>
+                                            <option value="cc">CC</option>
+                                        </select>
+                                        <input
+                                            type="number" class="form-control" id="btn-number"
+                                            min="0" max="127" value="60"
+                                        />
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label mb-1">
                                         MIDI Channel
                                         <span class="text-secondary small">(0–15)</span>
                                     </label>
@@ -87,7 +103,7 @@
                                         min="0" max="15" value="0"
                                     />
                                 </div>
-                                <div class="col-12">
+                                <div class="col-6">
                                     <label class="form-label mb-1">MIDI Output</label>
                                     <select class="form-select" id="midi-output">
                                         <option value="">Loading…</option>
@@ -134,6 +150,17 @@
                                 </div>
                                 <div class="progress">
                                     <div id="z-bar" class="progress-bar bg-success" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <!-- Button touch -->
+                            <div>
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <span class="axis-label text-warning">Touch</span>
+                                    <span id="btn-val" class="cc-value text-secondary">—</span>
+                                </div>
+                                <div class="progress">
+                                    <div id="btn-bar" class="progress-bar bg-warning" style="width: 0%"></div>
                                 </div>
                             </div>
 

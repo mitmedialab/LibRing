@@ -16,6 +16,8 @@ const bleStatusEl    = document.getElementById('ble-status')       as HTMLElemen
 const midiStatusEl   = document.getElementById('midi-status')      as HTMLElement;
 const btnRow         = document.getElementById('btn-row')          as HTMLElement;
 const btnIndicator   = document.getElementById('btn-indicator')    as HTMLDivElement;
+const btnModeSel     = document.getElementById('btn-mode')         as HTMLSelectElement;
+const btnNumberInput = document.getElementById('btn-number')       as HTMLInputElement;
 
 const xValEl  = document.getElementById('x-cc-val') as HTMLElement;
 const yValEl  = document.getElementById('y-cc-val') as HTMLElement;
@@ -23,6 +25,8 @@ const zValEl  = document.getElementById('z-cc-val') as HTMLElement;
 const xBarEl  = document.getElementById('x-bar')    as HTMLElement;
 const yBarEl  = document.getElementById('y-bar')    as HTMLElement;
 const zBarEl  = document.getElementById('z-bar')    as HTMLElement;
+const btnValEl = document.getElementById('btn-val') as HTMLElement;
+const btnBarEl = document.getElementById('btn-bar') as HTMLElement;
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -32,6 +36,10 @@ let lastSendTime = 0;
 const SEND_INTERVAL_MS = 20; // 50 Hz cap
 
 const chart = new AccelChart('accel-chart');
+
+// Button touch: what the press sent, so that the release turns it off even if the
+// settings changed in between (null: not pressed)
+let touchSent: { mode: 'note' | 'cc'; number: number; channel: number } | null = null;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -56,6 +64,38 @@ function sendCC(controller: number, value: number, channel: number) {
         midiOutput.sendControlChange(controller, value, { channels: channel + 1 });
     } catch (_) { /* ignore */ }
 }
+
+// Button touch -> MIDI: note-on (velocity 127) / note-off, or CC 127 / 0
+function handleTouch(pressed: boolean) {
+    if (btnIndicator) btnIndicator.style.backgroundColor = pressed ? '#198754' : '#dc3545';
+    if (pressed && !touchSent) {
+        const mode = btnModeSel.value === 'cc' ? 'cc' : 'note';
+        const number = clampCC(parseInt(btnNumberInput.value) || 0);
+        const channel = clampChannel(parseInt(midiChInput.value));
+        touchSent = { mode, number, channel };
+        try {
+            if (mode === 'note') midiOutput?.sendNoteOn(number, { channels: channel + 1, rawAttack: 127 });
+            else sendCC(number, 127, channel);
+        } catch (_) { /* ignore */ }
+        btnValEl.textContent = mode === 'note' ? `note ${number}` : `CC ${number}: 127`;
+        btnValEl.classList.remove('text-secondary');
+        btnBarEl.style.width = '100%';
+    } else if (!pressed && touchSent) {
+        const { mode, number, channel } = touchSent;
+        touchSent = null;
+        try {
+            if (mode === 'note') midiOutput?.sendNoteOff(number, { channels: channel + 1 });
+            else sendCC(number, 0, channel);
+        } catch (_) { /* ignore */ }
+        btnValEl.textContent = mode === 'note' ? 'off' : `CC ${number}: 0`;
+        btnBarEl.style.width = '0%';
+    }
+}
+
+// Default number when switching between note (middle C) and CC (64)
+btnModeSel.addEventListener('change', () => {
+    btnNumberInput.value = btnModeSel.value === 'cc' ? '64' : '60';
+});
 
 // ─── WebMIDI init ─────────────────────────────────────────────────────────────
 
@@ -101,6 +141,7 @@ midiOutputSel.addEventListener('change', () => {
 
 connectBtn.addEventListener('click', async () => {
     if (isConnected) {
+        handleTouch(false); // release a held note / CC
         await disconnectFromBLE();
         isConnected = false;
         setNtfHandler(() => {});
@@ -147,11 +188,7 @@ connectBtn.addEventListener('click', async () => {
                 updateMeter(zBarEl, zValEl, zCC);
             });
 
-            setBtnHandler((pressed) => {
-                if (btnIndicator) {
-                    btnIndicator.style.backgroundColor = pressed ? '#198754' : '#dc3545';
-                }
-            });
+            setBtnHandler((pressed) => handleTouch(!!pressed));
         } catch (err) {
             console.error('BLE connection failed:', err);
             bleStatusEl.textContent = 'BLE: Failed';
