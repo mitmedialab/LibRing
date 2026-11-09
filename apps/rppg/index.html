@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LibRing Webcam Pulse</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1b2130; --muted: #667085; --border: #dde1e8;
+    --accent: #2563eb; --warn: #b42318; --ok: #067647; --grid: #eef0f4;
+    --green: #16a34a; --red: #dc2626; --blue: #0284c7; --roi: #22c55e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10131a; --panel: #191d26; --text: #e7e9ee; --muted: #98a2b3; --border: #2c3240;
+      --accent: #60a5fa; --warn: #f97066; --ok: #47cd89; --grid: #222835;
+      --green: #4ade80; --red: #f87171; --blue: #38bdf8; --roi: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; flex: 1 1 auto; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  input { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border);
+          background: var(--bg); color: var(--text); }
+  input[type=number] { width: 80px; }
+  #status { color: var(--muted); }
+  #status.ok { color: var(--ok); } #status.err { color: var(--warn); }
+  label.inline { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+
+  .live { display: grid; grid-template-columns: minmax(0, 560px) minmax(190px, 1fr); gap: 12px; }
+  @media (max-width: 700px) { .live { grid-template-columns: 1fr; } }
+  .stage { position: relative; aspect-ratio: 4 / 3; background: #000; border-radius: 8px; overflow: hidden;
+           touch-action: none; user-select: none; -webkit-user-select: none; }
+  .stage video { width: 100%; height: 100%; display: block; object-fit: fill; transform: scaleX(-1); }
+  .stage .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                        color: #98a2b3; font-size: 13px; pointer-events: none; }
+  .roi { position: absolute; border: 2px solid var(--roi); border-radius: 4px; cursor: move;
+         box-shadow: 0 0 0 9999px rgba(0, 0, 0, .28); }
+  .roi span { position: absolute; top: 100%; left: -2px; margin-top: 4px; white-space: nowrap; font-size: 12px;
+              color: #fff; background: rgba(0, 0, 0, .55); padding: 1px 6px; border-radius: 4px; pointer-events: none; }
+  .roi .grip { position: absolute; right: -8px; bottom: -8px; width: 16px; height: 16px; border-radius: 4px;
+               background: var(--roi); cursor: nwse-resize; }
+  .bpm { display: flex; flex-direction: column; align-items: center; justify-content: center;
+         border-left: 1px solid var(--border); padding-left: 12px; }
+  @media (max-width: 700px) { .bpm { border-left: 0; padding-left: 0; } }
+  .bpm .value { font-size: 56px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .bpm .unit { color: var(--muted); margin-top: 2px; }
+  .bpm .heart { font-size: 22px; color: var(--red); transition: transform .12s; }
+  .bpm .conf { color: var(--muted); font-size: 12px; margin-top: 8px; text-align: center; }
+  .quality { color: var(--warn); font-size: 13px; margin-top: 10px; text-align: center; }
+  .trace-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 13px; }
+  .trace-head b { color: var(--text); font-weight: 600; }
+  canvas { width: 100%; display: block; }
+  #cpulse { height: 200px; } #crgb { height: 110px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  .key { display: inline-flex; gap: 10px; }
+  .key i { font-style: normal; font-weight: 600; }
+
+  .spo2 { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-end; }
+  .spo2 .label { color: var(--muted); font-size: 12px; }
+  .spo2 .mid { font-size: 28px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .spo2 .sub { color: var(--muted); font-size: 12px; }
+  .caution { color: var(--warn); font-size: 13px; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>LibRing Webcam Pulse (rPPG)</h1>
+    <button id="start" class="primary">Start camera</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="csv" disabled>Download CSV</button>
+    <span id="status">Camera off</span>
+  </header>
+
+  <div class="panel">
+    <div class="live">
+      <div>
+        <div class="stage" id="stage">
+          <video id="video" playsinline muted></video>
+          <div class="placeholder" id="placeholder">Camera off</div>
+          <div class="roi" id="roi"><span>put your forehead / cheek here</span><div class="grip" id="grip"></div></div>
+        </div>
+        <div class="row" style="margin-top: 8px">
+          <label class="inline"><input type="checkbox" id="lock" disabled> Lock exposure &amp; white balance</label>
+          <span class="hint" id="lockinfo" style="margin: 0"></span>
+        </div>
+      </div>
+      <div class="bpm">
+        <div class="heart" id="heart">♥</div>
+        <div class="value" id="bpm">--</div>
+        <div class="unit">bpm</div>
+        <div class="conf" id="conf">Start the camera, then keep still in good light</div>
+        <div class="quality" id="quality"></div>
+      </div>
+    </div>
+    <p class="hint">Drag the box onto bare skin (forehead or cheek), drag the corner to resize it. Light from the
+      front (window or lamp), no flicker, head still. Moving the box restarts the measurement.</p>
+    <p class="hint" id="rate"></p>
+  </div>
+
+  <div class="panel">
+    <div class="trace-head"><span><b>Pulse</b> (POS, 0.7–3.5 Hz, last 10 s)</span><span id="pulseinfo"></span></div>
+    <canvas id="cpulse"></canvas>
+    <div class="trace-head" style="margin-top: 10px"><span><b>Box colour</b> (R, G, B means, each relative to its mean, %)</span>
+      <span id="rgbinfo"></span></div>
+    <canvas id="crgb"></canvas>
+    <p class="hint">Heart rate: autocorrelation of the last 10 s (40–180 bpm), cross-checked by the spectrum peak.
+      Confidence is the autocorrelation peak. This is an independent check of the ring's heart rate.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Experimental SpO2 (uncalibrated)</h2>
+    <div class="spo2">
+      <div><div class="label">ratio R (red / blue)</div><div class="mid" id="ratio">--</div>
+        <div class="sub" id="ratioavg">&nbsp;</div></div>
+      <div><div class="label">SpO2 = A − B·R</div><div class="mid" id="spo2">--</div><div class="sub">not a measurement</div></div>
+      <label class="inline">A <input type="number" id="cA" step="0.1" value="100"></label>
+      <label class="inline">B <input type="number" id="cB" step="0.1" value="5"></label>
+    </div>
+    <p class="hint">R = (AC/DC of red) / (AC/DC of blue) over the last 10 s: AC is the standard deviation of the
+      0.7–3.5 Hz band, DC the mean. Shown only while the heart-rate confidence is above 50%.
+      A = 100 and B = 5 are placeholders: they must be fitted against a real pulse oximeter (record R next to it
+      at several SpO2 levels and fit a line), for this camera, this light and this person.</p>
+    <p class="caution">Webcam SpO2 is not reliable: the camera's colour filters, white balance, auto exposure, the
+      light's spectrum, skin tone and motion all change R, and errors of several % remain even after calibration.
+      This is not a medical or reference measurement.</p>
+  </div>
+</main>
+
+<script>
+'use strict';
+// ---- signal processing: pure functions (no DOM), also loaded by the node test ----
+const FS = 30;        // resampled rate (Hz)
+const PROC_S = 20;    // seconds processed on each frame
+const WIN_S = 10;     // heart rate / SpO2 window (s)
+const WARM_S = 3;     // band-pass settling time, not used (s)
+const MIN_S = 6;      // shortest window for a heart rate (s)
+
+const mean = x => x.reduce((a, b) => a + b, 0) / (x.length || 1);
+function std(x) {
+  const m = mean(x);
+  return Math.sqrt(x.reduce((a, b) => a + (b - m) * (b - m), 0) / (x.length || 1));
+}
+
+// Linear interpolation of the camera frames {t (s), r, g, b} on the grid t0 + k / fs, from tFrom on
+function resample(frames, fs, t0, tFrom) {
+  const first = frames[0].t, last = frames[frames.length - 1].t;
+  const k0 = Math.ceil((Math.max(tFrom, first) - t0) * fs), k1 = Math.floor((last - t0) * fs);
+  const out = {k0, t: [], r: [], g: [], b: []};
+  let j = 0;
+  for (let k = k0; k <= k1; k++) {
+    const t = t0 + k / fs;
+    while (j < frames.length - 2 && frames[j + 1].t < t) j++;
+    const a = frames[j], c = frames[j + 1];
+    const u = c.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (c.t - a.t))) : 0;
+    out.t.push(t);
+    for (const ch of ['r', 'g', 'b']) out[ch].push(a[ch] + u * (c[ch] - a[ch]));
+  }
+  return out;
+}
+
+// POS (Wang et al. 2017, "Algorithmic principles of remote PPG"): in 1.6 s windows, divide
+// each channel by its mean, project on the plane orthogonal to skin tone
+// (S1 = G - B, S2 = -2R + G + B), mix with alpha = std(S1) / std(S2), overlap-add. Each sample
+// is divided by the number of windows added to it: relative units, full amplitude up to the end
+function pos(r, g, b, fs) {
+  const n = r.length, l = Math.ceil(1.6 * fs), h = new Array(n).fill(0), count = new Array(n).fill(0);
+  const s1 = new Array(l), s2 = new Array(l);
+  for (let m = 0; m + l <= n; m++) {
+    let mr = 0, mg = 0, mb = 0;
+    for (let i = m; i < m + l; i++) { mr += r[i]; mg += g[i]; mb += b[i]; }
+    mr /= l; mg /= l; mb /= l;
+    if (!(mr > 0 && mg > 0 && mb > 0)) continue;
+    for (let i = 0; i < l; i++) {
+      const cr = r[m + i] / mr, cg = g[m + i] / mg, cb = b[m + i] / mb;
+      s1[i] = cg - cb;
+      s2[i] = -2 * cr + cg + cb;
+    }
+    const sd2 = std(s2), alpha = sd2 > 0 ? std(s1) / sd2 : 0;
+    const p = s1.map((v, i) => v + alpha * s2[i]), pm = mean(p);
+    for (let i = 0; i < l; i++) { h[m + i] += p[i] - pm; count[m + i]++; }
+  }
+  return h.map((v, i) => count[i] ? v / count[i] : 0);
+}
+
+// 2nd-order Butterworth biquad (RBJ cookbook), 'lp' or 'hp'
+function biquad(x, type, f0, fs) {
+  const w = 2 * Math.PI * f0 / fs, cw = Math.cos(w), al = Math.sin(w) / Math.SQRT2;  // Q = 1/sqrt(2)
+  const a0 = 1 + al, a1 = -2 * cw / a0, a2 = (1 - al) / a0;
+  const k = (type === 'lp' ? 1 - cw : 1 + cw) / 2 / a0;
+  const b0 = k, b1 = type === 'lp' ? 2 * k : -2 * k, b2 = k;
+  const y = new Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+  }
+  return y;
+}
+// 0.7-3.5 Hz band-pass (-3 dB), causal: two high-pass and two low-pass stages (two equal
+// stages are each -1.5 dB at the band edge: corners 1.2465 times outside it). Starts from the
+// first half second's level so the high-pass settles fast; the first WARM_S seconds are unusable
+function bandpass(x, fs, lo = 0.7, hi = 3.5) {
+  const x0 = mean(x.slice(0, Math.max(1, Math.round(fs / 2))));
+  let y = x.map(v => v - x0);
+  y = biquad(biquad(y, 'hp', lo / 1.2465, fs), 'hp', lo / 1.2465, fs);
+  return biquad(biquad(y, 'lp', hi * 1.2465, fs), 'lp', hi * 1.2465, fs);
+}
+
+// Heart rate by autocorrelation (40-180 bpm): {bpm, r}. Takes the peak nearest to the spectrum's
+// estimate (near, bpm) when given, else the shortest lag whose peak is within 15% of the best
+// (a lag of 2 or 3 beats correlates almost as well). The peaks at 2, 3... periods (up to 4 s)
+// refine the period: with parabolic interpolation of each, a least-squares fit lag = k * period
+function heartRate(x, fs, near = null) {
+  if (x.length < 5 * fs) return {bpm: null, r: 0};
+  const m = mean(x), y = x.map(v => v - m);
+  const e = y.reduce((a, b) => a + b * b, 0) || 1;
+  const lo = Math.floor(60 * fs / 180), hi = Math.ceil(60 * fs / 40);
+  const top = Math.max(hi + 1, Math.min(Math.floor(y.length / 2), 4 * fs));
+  const r = [];
+  for (let L = lo - 1; L <= top; L++) {
+    let s = 0;
+    for (let i = 0; i + L < y.length; i++) s += y[i] * y[i + L];
+    r[L] = s / e * y.length / (y.length - L);
+  }
+  const isPeak = L => r[L] > 0 && r[L] >= r[L - 1] && r[L] >= r[L + 1];
+  const peaks = [];
+  for (let L = lo; L <= hi; L++) if (isPeak(L)) peaks.push(L);
+  if (!peaks.length) return {bpm: null, r: 0};
+  const best = Math.max(...peaks.map(L => r[L]));
+  const L = near ? peaks.reduce((a, L) => Math.abs(L - 60 * fs / near) < Math.abs(a - 60 * fs / near) ? L : a)
+    : peaks.find(L => r[L] >= 0.85 * best);
+  const refine = L => {  // parabolic interpolation around a peak
+    const den = r[L - 1] - 2 * r[L] + r[L + 1];
+    return L + (den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (r[L - 1] - r[L + 1]) / den)) : 0);
+  };
+  const p1 = refine(L);
+  let num = p1, den = 1;
+  for (let k = 2; Math.round(k * p1) + 1 < top; k++) {
+    // the highest peak within a quarter period of k periods
+    let Lk = null;
+    for (let j = Math.round((k - 0.25) * p1); j <= Math.round((k + 0.25) * p1); j++)
+      if (j > lo && j < top && isPeak(j) && (Lk === null || r[j] > r[Lk])) Lk = j;
+    if (Lk === null) break;
+    num += k * refine(Lk); den += k * k;
+  }
+  return {bpm: 60 * fs / (num / den), r: Math.min(1, r[L])};
+}
+
+// Spectrum peak in 0.7-3.5 Hz (Hann window, DFT on a 0.01 Hz grid = a zero-padded FFT): bpm
+function spectrumPeak(x, fs, lo = 0.7, hi = 3.5) {
+  const n = x.length, m = mean(x);
+  const y = x.map((v, i) => (v - m) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1))));
+  let best = 0, fBest = null;
+  for (let f = lo; f <= hi + 1e-9; f += 0.01) {
+    const w = 2 * Math.PI * f / fs;
+    let re = 0, im = 0;
+    for (let i = 0; i < n; i++) { re += y[i] * Math.cos(w * i); im -= y[i] * Math.sin(w * i); }
+    const p = re * re + im * im;
+    if (p > best) { best = p; fBest = f; }
+  }
+  return fBest === null ? null : 60 * fBest;
+}
+
+// Spectrum peak, then the autocorrelation peak next to it; they must agree within 5 bpm
+function estimateHeartRate(pulse, fs) {
+  const fft = spectrumPeak(pulse, fs), ac = heartRate(pulse, fs, fft);
+  const agree = ac.bpm !== null && fft !== null && Math.abs(ac.bpm - fft) <= 5;
+  return {bpm: ac.bpm, r: ac.r, fft, agree};
+}
+
+// SpO2 ratio of ratios over the last n samples: (AC/DC red) / (AC/DC blue)
+function ratioOfRatios(r, b, fs, n) {
+  const acdc = x => std(bandpass(x, fs).slice(-n)) / mean(x.slice(-n));
+  const red = acdc(r), blue = acdc(b);
+  return blue > 0 ? red / blue : null;
+}
+
+// The pulse from the last PROC_S seconds of camera frames (t in seconds, grid origin t0)
+function analyse(frames, t0) {
+  const s = resample(frames, FS, t0, frames[frames.length - 1].t - PROC_S);
+  if (s.t.length < 2) return null;
+  s.pulse = bandpass(pos(s.r, s.g, s.b, FS), FS);
+  return s;
+}
+// Heart rate and SpO2 ratio over the last WIN_S seconds of it (null while too short). The heart
+// rate leaves out the last 1.6 s of pulse, where POS has not added all its windows yet
+function estimate(s) {
+  const l = Math.ceil(1.6 * FS);
+  const n = Math.min(WIN_S * FS, s.pulse.length - WARM_S * FS - l);  // usable samples
+  s.hr = n >= MIN_S * FS ? estimateHeartRate(s.pulse.slice(-n - l, -l), FS) : null;
+  s.ratio = n >= MIN_S * FS ? ratioOfRatios(s.r, s.b, FS, n) : null;
+  return s;
+}
+// ---- end of signal processing ----
+
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const KEY = 'libring-rppg';
+const KEEP_S = 30;     // camera frames kept (s)
+const MIRROR = true;   // the video is shown mirrored, the box is in screen coordinates
+const video = $('video');
+const off = document.createElement('canvas');
+const octx = off.getContext('2d', {willReadFrequently: true});
+
+let stream = null, frames = [], t0 = null, lastT = null, timeSource = null;
+let frameSeq = 0, doneSeq = 0, result = null, lastTick = 0, lastBeat = 0;
+let roi = {x: 0.4, y: 0.16, w: 0.2, h: 0.14};
+let shownBpm = null, goodRatios = [], rec = [], lastK = -Infinity;
+
+function status(msg, cls = '') { const s = $('status'); s.textContent = msg; s.className = cls; }
+
+// ---- settings (A, B, box) ----
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY) || '{}');
+    if (s.roi && ['x', 'y', 'w', 'h'].every(k => Number.isFinite(s.roi[k]))) roi = s.roi;
+    if (Number.isFinite(s.A)) $('cA').value = s.A;
+    if (Number.isFinite(s.B)) $('cB').value = s.B;
+  } catch (e) { /* no storage */ }
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify({roi, A: parseFloat($('cA').value), B: parseFloat($('cB').value)})); }
+  catch (e) { /* no storage */ }
+}
+
+// ---- region of interest ----
+function placeRoi() {
+  const el = $('roi');
+  el.style.left = `${roi.x * 100}%`; el.style.top = `${roi.y * 100}%`;
+  el.style.width = `${roi.w * 100}%`; el.style.height = `${roi.h * 100}%`;
+}
+function dragRoi(e, mode) {
+  e.preventDefault(); e.stopPropagation();
+  const box = $('stage').getBoundingClientRect(), start = {...roi}, x0 = e.clientX, y0 = e.clientY;
+  const el = e.currentTarget;
+  el.setPointerCapture(e.pointerId);
+  const move = ev => {
+    const dx = (ev.clientX - x0) / box.width, dy = (ev.clientY - y0) / box.height;
+    if (mode === 'move') { roi.x = clamp(start.x + dx, 0, 1 - roi.w); roi.y = clamp(start.y + dy, 0, 1 - roi.h); }
+    else { roi.w = clamp(start.w + dx, 0.04, 1 - roi.x); roi.h = clamp(start.h + dy, 0.04, 1 - roi.y); }
+    placeRoi();
+  };
+  const up = () => {
+    el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up);
+    el.removeEventListener('pointercancel', up);
+    if (['x', 'y', 'w', 'h'].some(k => roi[k] !== start[k])) { save(); restartMeasure(); }
+  };
+  el.addEventListener('pointermove', move); el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+}
+
+// Mean R, G, B of the box in the current video frame
+function roiMean() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  const fx = MIRROR ? 1 - roi.x - roi.w : roi.x;
+  const sx = clamp(Math.round(fx * vw), 0, vw - 1), sy = clamp(Math.round(roi.y * vh), 0, vh - 1);
+  const sw = clamp(Math.round(roi.w * vw), 1, vw - sx), sh = clamp(Math.round(roi.h * vh), 1, vh - sy);
+  if (off.width !== sw || off.height !== sh) { off.width = sw; off.height = sh; }
+  octx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+  const d = octx.getImageData(0, 0, sw, sh).data;
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+  const n = d.length / 4;
+  return [r / n, g / n, b / n];
+}
+
+// ---- camera frames ----
+function onFrame(ms) {
+  const t = ms / 1000;
+  if (lastT !== null && t <= lastT) return;          // same frame again
+  if (lastT !== null && t - lastT > 1) frames = [];  // paused (hidden tab): start over
+  lastT = t;
+  if (t0 === null) t0 = t;
+  const m = roiMean();
+  if (!m) return;
+  frames.push({t, r: m[0], g: m[1], b: m[2]});
+  while (frames[0].t < t - KEEP_S) frames.shift();
+  frameSeq++;
+}
+function frameLoop() {
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+    // real frame timestamps: the capture time when the browser gives it, else the callback time
+    const cb = (now, meta) => {
+      if (!stream) return;
+      if (timeSource === null) timeSource = meta.captureTime > 0 ? 'capture time' : 'frame callback';
+      if (timeSource === 'frame callback') onFrame(now);
+      else if (meta.captureTime > 0) onFrame(meta.captureTime);
+      video.requestVideoFrameCallback(cb);
+    };
+    video.requestVideoFrameCallback(cb);
+  } else {
+    timeSource = 'animation frame';
+    let vt = -1;
+    const cb = () => {
+      if (!stream) return;
+      if (video.currentTime !== vt) { vt = video.currentTime; onFrame(performance.now()); }
+      requestAnimationFrame(cb);
+    };
+    requestAnimationFrame(cb);
+  }
+}
+function frameRate() {
+  const n = frames.length;
+  if (n < 2) return 0;
+  let i = n - 1;
+  while (i > 0 && frames[n - 1].t - frames[i - 1].t <= 2) i--;
+  return i < n - 1 ? (n - 1 - i) / (frames[n - 1].t - frames[i].t) : 0;
+}
+function restartMeasure() {
+  frames = []; result = null; shownBpm = null; goodRatios = [];
+  drawCharts(null);
+  $('bpm').textContent = $('ratio').textContent = $('spo2').textContent = '--';
+  $('ratioavg').innerHTML = '&nbsp;';
+  $('conf').textContent = stream ? 'Measuring…' : 'Start the camera, then keep still in good light';
+}
+
+// ---- drawing ----
+function draw(canvas, data, color, opts = {}) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (opts.clear !== false) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
+    for (let s = 1; s < 10; s++) { const x = Math.round(w * s / 10) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  }
+  if (data.length < 2) return;
+  let min = opts.min ?? Math.min(...data), max = opts.max ?? Math.max(...data);
+  if (max === min) { max += 1; min -= 1; }
+  const pad = (max - min) * 0.08;
+  const span = opts.span || WIN_S * FS;
+  ctx.strokeStyle = color; ctx.lineWidth = opts.width || 1.5; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  const x0 = w * (1 - data.length / span);
+  data.forEach((v, i) => {
+    const x = x0 + (i / (span - 1)) * w;
+    const y = h - ((v - min + pad) / (max - min + 2 * pad)) * h;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+}
+function drawCharts(s) {
+  const span = WIN_S * FS;
+  const pulse = s ? s.pulse.slice(Math.max(WARM_S * FS, s.pulse.length - span)) : [];
+  draw($('cpulse'), pulse, css('--green'), {width: 2.2});
+  const ch = s ? ['r', 'g', 'b'].map(c => {
+    const x = s[c].slice(-span), m = mean(x);
+    return x.map(v => 100 * (v / m - 1));
+  }) : [[], [], []];
+  const all = ch.flat();
+  const lim = all.length ? {min: Math.min(...all), max: Math.max(...all)} : {};
+  draw($('crgb'), ch[0], css('--red'), lim);
+  draw($('crgb'), ch[1], css('--green'), {...lim, clear: false});
+  draw($('crgb'), ch[2], css('--blue'), {...lim, clear: false});
+  if (pulse.length) {
+    const recent = pulse.slice(-4 * FS);
+    $('pulseinfo').textContent = `amplitude ${(100 * (Math.max(...recent) - Math.min(...recent))).toFixed(2)} %`;
+  }
+}
+
+// ---- once per second: heart rate, SpO2, quality, recording ----
+function update(s) {
+  const fps = frameRate();
+  const last = frames.slice(-Math.max(1, Math.round(fps)));
+  const rgb = ['r', 'g', 'b'].map(c => mean(last.map(f => f[c])));
+  $('rgbinfo').textContent = `R ${rgb[0].toFixed(0)}  G ${rgb[1].toFixed(0)}  B ${rgb[2].toFixed(0)}`;
+  const warn = [];
+  if (Math.min(...rgb) < 30) warn.push('Too dark: more light on the face');
+  if (Math.max(...rgb) > 240) warn.push('Saturated: less light, or move the box off shiny skin');
+  const badLight = warn.length > 0;
+  if (fps && fps < 15) warn.push(`Low frame rate (${fps.toFixed(1)} fps): more light usually helps`);
+  $('quality').textContent = warn.join('. ');
+  const vw = video.videoWidth, vh = video.videoHeight;
+  $('rate').textContent = `${fps.toFixed(1)} frames/s (timestamps: ${timeSource}), resampled to ${FS} Hz. ` +
+    `Video ${vw}×${vh}, box ${Math.round(roi.w * vw)}×${Math.round(roi.h * vh)} px.`;
+
+  const hr = s && s.hr, conf = $('conf');
+  shownBpm = null;
+  if (!hr) conf.textContent = 'Measuring…';
+  else if (badLight) conf.textContent = warn[0];
+  else if (hr.bpm && hr.agree && hr.r > 0.45) {
+    shownBpm = hr.bpm;
+    conf.textContent = `confidence ${(hr.r * 100).toFixed(0)}% (spectrum ${hr.fft.toFixed(0)})`;
+  } else {
+    const other = hr.bpm && hr.fft ? `, autocorrelation ${hr.bpm.toFixed(0)} vs spectrum ${hr.fft.toFixed(0)}` : '';
+    conf.textContent = `No clear pulse (confidence ${(hr.r * 100).toFixed(0)}%${other}): keep still, good light`;
+  }
+  $('bpm').textContent = shownBpm ? Math.round(shownBpm) : '--';
+
+  // experimental SpO2, only with a clear pulse
+  const A = parseFloat($('cA').value), B = parseFloat($('cB').value);
+  if (shownBpm && hr.r > 0.5 && s.ratio) {
+    goodRatios.push(s.ratio);
+    if (goodRatios.length > 30) goodRatios.shift();
+    $('ratio').textContent = s.ratio.toFixed(3);
+    $('spo2').textContent = Number.isFinite(A - B * s.ratio) ? `${(A - B * s.ratio).toFixed(1)} %` : '--';
+  } else {
+    $('ratio').textContent = '--'; $('spo2').textContent = '--';
+  }
+  $('ratioavg').innerHTML = goodRatios.length
+    ? `mean of last ${goodRatios.length} good: ${mean(goodRatios).toFixed(3)}` : '&nbsp;';
+
+  // recording: the resampled samples older than 2 s (the POS overlap-add is complete there)
+  if (s) {
+    const tEnd = s.t[s.t.length - 1] - 2;
+    for (let i = 0; i < s.t.length && s.t[i] <= tEnd; i++) {
+      const k = s.k0 + i;
+      if (k <= lastK) continue;
+      lastK = k;
+      rec.push([(s.t[i] - t0).toFixed(3), s.r[i].toFixed(3), s.g[i].toFixed(3), s.b[i].toFixed(3),
+                i >= WARM_S * FS ? s.pulse[i].toPrecision(5) : '', shownBpm ? shownBpm.toFixed(1) : '']);
+    }
+    if (rec.length > 2 * 3600 * FS) rec.splice(0, rec.length - 2 * 3600 * FS);  // keep 2 h
+    $('csv').textContent = `Download CSV (${Math.round(rec.length / FS)} s)`;
+    $('csv').disabled = !rec.length;
+  }
+}
+
+function render() {
+  if (frameSeq !== doneSeq && frames.length > 1) {
+    doneSeq = frameSeq;
+    result = analyse(frames, t0);
+    drawCharts(result);
+    const now = performance.now();
+    if (result && now - lastTick > 1000) { lastTick = now; update(estimate(result)); }
+  }
+  // beat the heart once per period
+  const now = performance.now();
+  if (shownBpm && now - lastBeat > 60000 / shownBpm) {
+    lastBeat = now;
+    $('heart').style.transform = 'scale(1.35)';
+    setTimeout(() => { $('heart').style.transform = ''; }, 140);
+  }
+  requestAnimationFrame(render);
+}
+
+// ---- camera ----
+async function start() {
+  try {
+    status('Waiting for the camera…');
+    stream = await navigator.mediaDevices.getUserMedia({audio: false,
+      video: {width: {ideal: 640}, height: {ideal: 480}, frameRate: {ideal: 30}, facingMode: 'user'}});
+    video.srcObject = stream;
+    await video.play();
+    $('stage').style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+    $('placeholder').style.display = 'none';
+    t0 = null; lastT = null; timeSource = null; rec = []; lastK = -Infinity;
+    restartMeasure();
+    const track = stream.getVideoTracks()[0], set = track.getSettings();
+    track.addEventListener('ended', stop);
+    status(`${track.label || 'Camera'}: ${set.width}×${set.height}, ${set.frameRate ? set.frameRate.toFixed(0) : '?'} fps`, 'ok');
+    $('start').disabled = true; $('stop').disabled = false;
+    $('lock').checked = false; $('lock').disabled = false; $('lockinfo').textContent = '';
+    frameLoop();
+  } catch (e) {
+    stream = null;
+    status(`Camera: ${e.message}`, 'err');
+  }
+}
+function stop() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  video.srcObject = null;
+  $('placeholder').style.display = '';
+  $('start').disabled = false; $('stop').disabled = true; $('lock').disabled = true;
+  restartMeasure();
+  status('Camera off');
+}
+// Auto exposure and white balance change the colours: lock them if the camera allows it
+async function lock(on) {
+  const track = stream && stream.getVideoTracks()[0];
+  if (!track) return;
+  const caps = track.getCapabilities ? track.getCapabilities() : {}, adv = {};
+  if ((caps.exposureMode || []).includes('manual')) adv.exposureMode = on ? 'manual' : 'continuous';
+  if ((caps.whiteBalanceMode || []).includes('manual')) adv.whiteBalanceMode = on ? 'manual' : 'continuous';
+  if (!Object.keys(adv).length) { $('lockinfo').textContent = 'not supported by this camera / browser'; $('lock').checked = false; return; }
+  try {
+    await track.applyConstraints({advanced: [adv]});
+    $('lockinfo').textContent = on ? `locked: ${Object.keys(adv).join(', ')}` : 'automatic';
+    restartMeasure();
+  } catch (e) { $('lockinfo').textContent = e.message; }
+}
+
+function download() {
+  const csv = 'time_s,r,g,b,pulse,bpm\n' + rec.map(r => r.join(',')).join('\n') + '\n';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+  a.download = `rppg-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---- wiring ----
+$('start').onclick = start;
+$('stop').onclick = stop;
+$('csv').onclick = download;
+$('lock').onchange = () => lock($('lock').checked);
+$('cA').onchange = $('cB').onchange = save;
+$('roi').addEventListener('pointerdown', e => dragRoi(e, 'move'));
+$('grip').addEventListener('pointerdown', e => dragRoi(e, 'size'));
+load();
+placeRoi();
+if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+  status('Camera not available: open this page from localhost or https', 'err');
+  $('start').disabled = true;
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
