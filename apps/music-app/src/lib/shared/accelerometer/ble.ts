@@ -42,7 +42,10 @@ function handleAccelNotification(event: any) {
     try {
         const value = event.target.value;
 
-        const sens = 0; // value.getInt8(6, true);
+        // Sensitivity sent by the ring (byte 6, 3 = +-16 g). It used to be hard-coded to 0
+        // (+-2 g) because the firmware never set the range and many rings stayed at the
+        // sensor's +-2 g default; the firmware now sets +-16 g and reports it.
+        const sens = value.byteLength > 6 ? value.getUint8(6) : 0;
 
         // Parse accelerometer data
         let x, y, z;
