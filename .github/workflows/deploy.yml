@@ -67,6 +67,8 @@ jobs:
                   mkdir -p deploy/music-app
                   mkdir -p deploy/perlin
                   mkdir -p deploy/camera
+                  mkdir -p deploy/ppg
+                  mkdir -p deploy/rppg
 
             - name: Copy build outputs
               run: |
@@ -76,6 +78,8 @@ jobs:
                   cp -r apps/music-app/dist/* deploy/music-app/
                   cp -r apps/perlin/* deploy/perlin/
                   cp -r apps/camera/* deploy/camera/
+                  cp -r apps/ppg/* deploy/ppg/
+                  cp -r apps/rppg/* deploy/rppg/
 
             #
             # Deploy to gh-pages branch
