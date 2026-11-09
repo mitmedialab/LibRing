@@ -1,4 +1,4 @@
-import { connectToBLE, disconnectFromBLE, setNtfHandler } from './lib/shared/accelerometer/ble';
+import { connectToBLE, disconnectFromBLE, setNtfHandler, setDisconnectHandler } from './lib/shared/accelerometer/ble';
 import { SleepStateMachine, type SleepState } from './lib/shared/SleepStateMachine';
 
 // Initialize on page load
@@ -103,6 +103,17 @@ if (body && body.id === 'page-classify') {
 
     setButtonToConnect();
 
+    // The ring dropped the connection by itself: back to the Connect button
+    setDisconnectHandler(() => {
+        isConnected = false;
+        isConnecting = false;
+        setNtfHandler(() => {});
+        sleepStateMachine.reset();
+        updateSleepStateDisplay(sleepStateMachine.getState());
+        setButtonToConnect();
+        if (connectToggleBtn) connectToggleBtn.title = 'The ring disconnected (out of range or battery?)';
+    });
+
     connectToggleBtn?.addEventListener('click', async () => {
         if (isConnected) {
             // Disconnect
@@ -121,7 +132,11 @@ if (body && body.id === 'page-classify') {
             // Start connecting
             setButtonToConnecting();
             try {
-                await connectToBLE();
+                await connectToBLE((message) => {
+                    if (connectToggleBtn) {
+                        connectToggleBtn.innerHTML = `<span class="spinner-inline" aria-hidden="true"></span> ${message}`;
+                    }
+                });
                 // on success
                 isConnected = true;
                 isConnecting = false;
@@ -140,6 +155,7 @@ if (body && body.id === 'page-classify') {
                 isConnecting = false;
                 // show failure state briefly
                 if (connectToggleBtn) {
+                    connectToggleBtn.title = error instanceof Error ? error.message : String(error);
                     connectToggleBtn.innerHTML = 'Connection failed — Retry';
                     connectToggleBtn.disabled = false;
                     connectToggleBtn.className = 'btn btn-warning btn-lg';

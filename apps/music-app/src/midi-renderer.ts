@@ -1,5 +1,5 @@
 import { WebMidi, Output } from 'webmidi';
-import { connectToBLE, disconnectFromBLE, setNtfHandler, setBtnHandler } from './lib/shared/accelerometer/ble';
+import { connectToBLE, disconnectFromBLE, setNtfHandler, setBtnHandler, setDisconnectHandler } from './lib/shared/accelerometer/ble';
 import { AccelChart } from './lib/shared/plot';
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
@@ -16,6 +16,7 @@ const bleStatusEl    = document.getElementById('ble-status')       as HTMLElemen
 const midiStatusEl   = document.getElementById('midi-status')      as HTMLElement;
 const btnRow         = document.getElementById('btn-row')          as HTMLElement;
 const btnIndicator   = document.getElementById('btn-indicator')    as HTMLDivElement;
+const bleMessageEl   = document.getElementById('ble-message')      as HTMLElement;
 const btnModeSel     = document.getElementById('btn-mode')         as HTMLSelectElement;
 const btnNumberInput = document.getElementById('btn-number')       as HTMLInputElement;
 
@@ -139,23 +140,38 @@ midiOutputSel.addEventListener('change', () => {
 
 // ─── BLE connect / disconnect ────────────────────────────────────────────────
 
+// Back to the disconnected state (user disconnection or the ring dropping out)
+function showDisconnected(status: string, badgeClass: string) {
+    handleTouch(false); // release a held note / CC
+    isConnected = false;
+    setNtfHandler(() => {});
+    setBtnHandler(() => {});
+    bleStatusEl.textContent = status;
+    bleStatusEl.className = badgeClass;
+    connectBtn.textContent = 'Connect Ring';
+    connectBtn.className = 'btn btn-primary';
+    btnRow.style.display = 'none';
+}
+
+setDisconnectHandler(() => {
+    showDisconnected('BLE: Connection lost', 'badge bg-warning text-dark');
+    bleMessageEl.textContent = 'The ring disconnected (out of range or battery?): click Connect Ring to reconnect.';
+});
+
 connectBtn.addEventListener('click', async () => {
     if (isConnected) {
-        handleTouch(false); // release a held note / CC
         await disconnectFromBLE();
-        isConnected = false;
-        setNtfHandler(() => {});
-        setBtnHandler(() => {});
-        bleStatusEl.textContent = 'BLE: Disconnected';
-        bleStatusEl.className = 'badge bg-secondary';
-        connectBtn.textContent = 'Connect Ring';
-        connectBtn.className = 'btn btn-primary';
-        btnRow.style.display = 'none';
+        showDisconnected('BLE: Disconnected', 'badge bg-secondary');
     } else {
         connectBtn.disabled = true;
         connectBtn.textContent = 'Connecting…';
+        bleMessageEl.textContent = '';
         try {
-            await connectToBLE();
+            await connectToBLE((message) => {
+                connectBtn.textContent = message;
+                bleStatusEl.textContent = `BLE: ${message}`;
+                bleStatusEl.className = 'badge bg-info text-dark';
+            });
             isConnected = true;
             bleStatusEl.textContent = 'BLE: Connected';
             bleStatusEl.className = 'badge bg-success';
@@ -191,8 +207,11 @@ connectBtn.addEventListener('click', async () => {
             setBtnHandler((pressed) => handleTouch(!!pressed));
         } catch (err) {
             console.error('BLE connection failed:', err);
-            bleStatusEl.textContent = 'BLE: Failed';
-            bleStatusEl.className = 'badge bg-danger';
+            // NotFoundError: the user closed the ring chooser
+            const cancelled = err instanceof DOMException && err.name === 'NotFoundError';
+            bleMessageEl.textContent = cancelled ? '' : (err instanceof Error ? err.message : String(err));
+            bleStatusEl.textContent = cancelled ? 'BLE: Disconnected' : 'BLE: Failed';
+            bleStatusEl.className = cancelled ? 'badge bg-secondary' : 'badge bg-danger';
             connectBtn.textContent = 'Connect Ring';
             connectBtn.className = 'btn btn-primary';
         } finally {

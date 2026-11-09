@@ -60,6 +60,7 @@ function handleAccelNotification(event: any) {
 
         const timestamp = new Date().toLocaleTimeString();
 
+        lastAccelTime = Date.now();
         if (accelNtfHandler) accelNtfHandler({ ...reading, timestamp });
     } catch (error) {
         console.error('Error processing accelerometer notification:', error);
@@ -72,12 +73,97 @@ function handleButtonNotification(event: any) {
     if (btnNtfHandler) btnNtfHandler(pressed);
 }
 
-export async function connectToBLE() {
-    // try {
+export type StatusHandler = (message: string) => void;
+export type DisconnectHandler = () => void;
+
+let disconnectHandler: DisconnectHandler = () => {};
+let userDisconnect = false;
+let lastAccelTime = 0;
+
+const ATTEMPTS = 3;
+const CONNECT_TIMEOUT_MS = 10000; // a connection that isn't up by then rarely comes up
+const DATA_TIMEOUT_MS = 4000; // the ring streams ~11 samples/s as soon as subscribed
+const NOTIFY_WAIT_MS = 1500; // no notification by then: poll instead (see startPolling)
+let polling = false;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${what}: no answer after ${ms / 1000} s`)), ms);
+        promise.then(
+            (v) => { clearTimeout(timer); resolve(v); },
+            (e) => { clearTimeout(timer); reject(e); },
+        );
+    });
+}
+
+// Chrome on Linux (BlueZ) only delivers notifications in the first connection after the
+// page loads: after a disconnection, the ring sends them and BlueZ receives them, but the
+// page never gets the events (until it is reloaded). Reading the values still works, so
+// then the accelerometer is read in a loop (~11 reads/s, the ring's rate) and the button
+// every 4th read.
+async function startPolling() {
+    polling = true;
+    console.log('No notifications (Chrome reconnection issue): reading the values instead');
+    let lastButton: number | null = null;
+    for (let i = 0; polling && device?.gatt?.connected; i++) {
+        try {
+            const value = await accelCharacteristic.readValue();
+            handleAccelNotification({ target: { value } });
+            if (i % 4 === 0) {
+                const b = await btnCharacteristic.readValue();
+                const pressed = b.getInt8(0);
+                if (lastButton !== null && pressed !== lastButton) handleButtonNotification({ target: { value: b } });
+                lastButton = pressed;
+            }
+        } catch (error) {
+            if (!device?.gatt?.connected) break;
+            console.warn('Read failed:', error);
+            await sleep(200);
+        }
+    }
+    polling = false;
+}
+
+// One connection attempt: GATT connection, characteristics, notifications, first data
+async function connectOnce() {
+    server = await withTimeout(device.gatt!.connect(), CONNECT_TIMEOUT_MS, 'Connection');
+    console.log('Connected to GATT server');
+    service = await server.getPrimaryService(serviceUuid);
+    characteristic = await service.getCharacteristic(characteristicUuid);
+    accelCharacteristic = await service.getCharacteristic(accelCharacteristicUuid);
+    btnCharacteristic = await service.getCharacteristic(btnCharacteristicUuid);
+
+    accelCharacteristic.removeEventListener('characteristicvaluechanged', handleAccelNotification);
+    accelCharacteristic.addEventListener('characteristicvaluechanged', handleAccelNotification);
+    btnCharacteristic.removeEventListener('characteristicvaluechanged', handleButtonNotification);
+    btnCharacteristic.addEventListener('characteristicvaluechanged', handleButtonNotification);
+
+    lastAccelTime = 0;
+    polling = false;
+    const subscribed = Date.now();
+    await accelCharacteristic.startNotifications();
+    await btnCharacteristic.startNotifications();
+    console.log('Started accelerometer and button notifications');
+
+    while (!lastAccelTime) {
+        const waited = Date.now() - subscribed;
+        if (waited > DATA_TIMEOUT_MS) throw new Error('Connected, but no accelerometer data');
+        if (waited > NOTIFY_WAIT_MS && !polling) startPolling(); // runs until disconnection
+        await sleep(100);
+    }
+    console.log(`First accelerometer data ${lastAccelTime - subscribed} ms after subscribing`);
+}
+
+/**
+ * Choose a ring (browser dialog) and connect, retrying up to ATTEMPTS times when
+ * the connection doesn't come up or no data arrives. onStatus gets progress
+ * messages for the page. Throws (with a message for the user) if all attempts fail.
+ */
+export async function connectToBLE(onStatus: StatusHandler = () => {}) {
     if (!navigator.bluetooth) {
-        console.error('Web Bluetooth API is not supported in this browser');
-        alert('Web Bluetooth API is not supported in this browser');
-        return;
+        throw new Error('Web Bluetooth is not available in this browser: use Chrome or Edge');
     }
 
     console.log('Requesting Bluetooth devices...');
@@ -86,52 +172,40 @@ export async function connectToBLE() {
         filters: [{ namePrefix: 'LibRing' }, { name: 'TEST' }], // LibRing_XX (XX: ring ID), LibRing, TEST: older firmware
         optionalServices: [serviceUuid],
     });
-
     console.log('Selected device:', device.name || 'Unknown');
-    console.log('Device ID:', device.id);
-
     if (!device.gatt) throw new Error('No GATT Server');
-
-    server = await device.gatt?.connect();
-    console.log('Connected to GATT server');
-
-    service = await server?.getPrimaryService(serviceUuid);
-    console.log('Service found:', service?.uuid);
-
-    characteristic = await service?.getCharacteristic(characteristicUuid);
-    console.log('Characteristic found:', characteristic?.uuid);
-
-    // Try to get accelerometer characteristic
-    try {
-        accelCharacteristic = await service?.getCharacteristic(accelCharacteristicUuid);
-        console.log('Accelerometer characteristic found:', accelCharacteristic?.uuid);
-    } catch (error) {
-        console.warn('Accelerometer characteristic not found:', error);
-        // accelCharacteristic = null;
-    }
-
-    // Subscribe to notifications
-    await accelCharacteristic.startNotifications();
-    console.log('Started accelerometer notifications');
-
-    // Add event listener for notifications
-    accelCharacteristic.addEventListener('characteristicvaluechanged', handleAccelNotification);
-
-    // try to get btn characteristic
-    btnCharacteristic = await service?.getCharacteristic(btnCharacteristicUuid);
-    console.log('Button characteristic found: ', btnCharacteristic?.uuid);
-
-    await btnCharacteristic.startNotifications();
-
-    btnCharacteristic.addEventListener('characteristicvaluechanged', handleButtonNotification);
-
+    device.removeEventListener('gattserverdisconnected', onDisconnected);
     device.addEventListener('gattserverdisconnected', onDisconnected);
-    // } catch (error) {
-    // }
+
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+        onStatus(attempt === 1 ? 'Connecting…' : `Connecting… (attempt ${attempt}/${ATTEMPTS})`);
+        const t0 = Date.now();
+        try {
+            userDisconnect = true; // a failed attempt's disconnection isn't a ring drop
+            await connectOnce();
+            userDisconnect = false;
+            console.log(`Connected in ${((Date.now() - t0) / 1000).toFixed(1)} s (attempt ${attempt})`);
+            onStatus('Connected');
+            return;
+        } catch (error) {
+            lastError = error;
+            console.warn(`Connection attempt ${attempt}/${ATTEMPTS} failed after ${((Date.now() - t0) / 1000).toFixed(1)} s:`, error);
+            device.gatt.disconnect(); // also aborts a connection still pending
+            await sleep(500);
+        }
+    }
+    userDisconnect = false;
+    const reason = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new Error(
+        `Could not connect to ${device.name || 'the ring'} (${reason}). ` +
+            'Check that it is charged, close by, and not connected to another app or tab, then try again.',
+    );
 }
 
 export async function disconnectFromBLE() {
-    if (!device.gatt) return;
+    if (!device?.gatt) return;
+    userDisconnect = true;
     if (device.gatt.connected) {
         device.gatt.disconnect();
     } else {
@@ -141,8 +215,7 @@ export async function disconnectFromBLE() {
 
 function onDisconnected() {
     console.log('Disconnected from device');
-
-    // Stop notifications if active
+    polling = false;
     if (accelCharacteristic) {
         try {
             accelCharacteristic.removeEventListener('characteristicvaluechanged', handleAccelNotification);
@@ -150,6 +223,14 @@ function onDisconnected() {
             console.warn('Error removing notification listener:', error);
         }
     }
+    // the ring dropped the connection (not the user, not a failed attempt): tell the page
+    if (!userDisconnect) disconnectHandler();
+    userDisconnect = false;
+}
+
+/** Called when the ring drops the connection by itself (out of range, battery, ...) */
+export function setDisconnectHandler(handler: DisconnectHandler) {
+    disconnectHandler = handler;
 }
 
 export function setNtfHandler(handler: AccelNtfHandler) {

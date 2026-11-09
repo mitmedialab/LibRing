@@ -1,4 +1,4 @@
-import { connectToBLE, disconnectFromBLE, setNtfHandler, setBtnHandler } from './lib/shared/accelerometer/ble';
+import { connectToBLE, disconnectFromBLE, setNtfHandler, setBtnHandler, setDisconnectHandler } from './lib/shared/accelerometer/ble';
 import { AccelChart } from './lib/shared/plot';
 import ClassificationMLRecorder, { ClassifyHandlerData } from './lib/classify/ClassificationMLRecorder';
 // import { GestureHandler } from './lib/classify/GestureHandler';
@@ -75,6 +75,13 @@ if (classifyPage) {
     const recordingToggleBtn = document.getElementById('classify-recording-toggle') as HTMLButtonElement;
     const loadModelBtn = document.getElementById('classify-load-model') as HTMLButtonElement;
     const btnIndicator = document.getElementById('btn-indicator') as HTMLDivElement;
+    const bleMessage = document.getElementById('ble-message') as HTMLSpanElement;
+
+    function showMessage(text: string) {
+        if (!bleMessage) return;
+        bleMessage.textContent = text;
+        bleMessage.style.display = text ? 'inline-block' : 'none';
+    }
 
     let isConnected = false;
     let isRecording = true;
@@ -93,7 +100,18 @@ if (classifyPage) {
 
     updateButtonStates();
 
+    // The ring dropped the connection by itself
+    setDisconnectHandler(() => {
+        isConnected = false;
+        setNtfHandler(() => {});
+        setBtnHandler(() => {});
+        if (btnIndicator) btnIndicator.style.backgroundColor = 'red';
+        updateButtonStates();
+        showMessage('The ring disconnected (out of range or battery?): click Connect to reconnect.');
+    });
+
     connectToggleBtn?.addEventListener('click', () => {
+        if (connectToggleBtn.disabled) return;
         if (isConnected) {
             disconnectFromBLE().then(() => {
                 isConnected = false;
@@ -104,7 +122,11 @@ if (classifyPage) {
                 updateButtonStates();
             });
         } else {
-            connectToBLE()
+            connectToggleBtn.disabled = true;
+            showMessage('');
+            connectToBLE((message) => {
+                connectToggleBtn.textContent = message;
+            })
                 .then(() => {
                     isConnected = true;
 
@@ -122,6 +144,14 @@ if (classifyPage) {
                 })
                 .catch((error) => {
                     console.error('Error connecting to device:', error);
+                    // NotFoundError: the user closed the ring chooser
+                    if (!(error instanceof DOMException && error.name === 'NotFoundError')) {
+                        showMessage(error instanceof Error ? error.message : String(error));
+                    }
+                })
+                .finally(() => {
+                    connectToggleBtn.disabled = false;
+                    updateButtonStates();
                 });
         }
     });
