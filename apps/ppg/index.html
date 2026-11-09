@@ -8,13 +8,13 @@
   :root {
     --bg: #f5f6f8; --panel: #ffffff; --text: #1b2130; --muted: #667085; --border: #dde1e8;
     --accent: #2563eb; --warn: #b42318; --ok: #067647; --grid: #eef0f4;
-    --green: #16a34a; --red: #dc2626; --ir: #7c3aed; --off: #98a2b3; --other: #64748b;
+    --green: #16a34a; --red: #dc2626; --ir: #7c3aed; --off: #98a2b3;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #10131a; --panel: #191d26; --text: #e7e9ee; --muted: #98a2b3; --border: #2c3240;
       --accent: #60a5fa; --warn: #f97066; --ok: #47cd89; --grid: #222835;
-      --green: #4ade80; --red: #f87171; --ir: #a78bfa; --off: #667085; --other: #94a3b8;
+      --green: #4ade80; --red: #f87171; --ir: #a78bfa; --off: #667085;
     }
   }
   * { box-sizing: border-box; }
@@ -48,7 +48,7 @@
   .trace-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 13px; }
   .trace-head b { color: var(--text); font-weight: 600; }
   canvas { width: 100%; display: block; }
-  #cpulse { height: 220px; } #craw { height: 110px; } #cother { height: 80px; } #cspo2 { height: 160px; }
+  #cpulse { height: 220px; } #craw { height: 110px; } #cspo2 { height: 160px; }
   #ctacho { height: 140px; } .trend { height: 90px; }
   .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 10px; }
   .stat { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
@@ -117,8 +117,6 @@
         <div class="trace-head" style="margin-top: 10px"><span><b>LED channel</b> raw</span>
           <span style="display:flex; gap:8px; align-items:center">level <span class="meter"><div id="level"></div></span><span id="rawinfo"></span></span></div>
         <canvas id="craw"></canvas>
-        <div class="trace-head" style="margin-top: 10px"><span><b>Other phase</b> (dark / low IR)</span><span id="otherinfo"></span></div>
-        <canvas id="cother"></canvas>
       </div>
       <div class="bpm">
         <div class="heart" id="heart">♥</div>
@@ -155,17 +153,6 @@
       variability is low.</p>
   </div>
 
-  <div class="panel" id="trendpanel">
-    <div class="trace-head"><span><b>Session</b> (last 10 min, one point per second)</span>
-      <button id="trendclear" style="padding: 2px 10px">Clear</button></div>
-    <div class="trend-head"><span><b style="color: var(--green)">Heart rate</b> (bpm)</span><span id="trendhr"></span></div>
-    <canvas class="trend" id="trhr"></canvas>
-    <div class="trend-head"><span><b style="color: var(--ir)">HRV</b> (RMSSD, ms)</span><span id="trendhrv"></span></div>
-    <canvas class="trend" id="trhrv"></canvas>
-    <div class="trend-head"><span><b style="color: var(--red)">SpO2</b> (%, experimental, SpO2 mode)</span><span id="trendspo2"></span></div>
-    <canvas class="trend" id="trspo2"></canvas>
-  </div>
-
   <div class="panel" id="spo2panel">
     <div class="row" style="justify-content: space-between">
       <label class="inline"><input type="checkbox" id="spo2on"> <b style="color: var(--text)">Measure SpO2</b> (red + IR, experimental)</label>
@@ -190,6 +177,17 @@
       the light that went through the finger) with the textbook curve 110 &minus; 25&nbsp;R. Most of the light
       reaching the sensor leaks inside the ring: the leak calibration measures it (kept in this browser, per
       ring). The ring shows a value only when the red and IR pulses match (correlation &ge; 90&nbsp;%).</p>
+  </div>
+
+  <div class="panel" id="trendpanel">
+    <div class="trace-head"><span><b>Session</b> (last 10 min, one point per second)</span>
+      <button id="trendclear" style="padding: 2px 10px">Clear</button></div>
+    <div class="trend-head"><span><b style="color: var(--green)">Heart rate</b> (bpm)</span><span id="trendhr"></span></div>
+    <canvas class="trend" id="trhr"></canvas>
+    <div class="trend-head"><span><b style="color: var(--ir)">HRV</b> (RMSSD, ms)</span><span id="trendhrv"></span></div>
+    <canvas class="trend" id="trhrv"></canvas>
+    <div class="trend-head"><span><b style="color: var(--red)">SpO2</b> (%, experimental, SpO2 mode)</span><span id="trendspo2"></span></div>
+    <canvas class="trend" id="trspo2"></canvas>
   </div>
 
   <div class="panel">
@@ -600,11 +598,10 @@ let lastBeat = 0;
 function render() {
   const color = ledColor();
   document.documentElement.style.setProperty('--led', color);
-  const raw = traces[1], other = traces[0];
+  const raw = traces[1];
   const ac = pulseOf(raw);
   draw($('cpulse'), ac, color, {width: 2.2, span: WINDOW - Math.round(1.5 * FS)});
   draw($('craw'), raw, color);
-  draw($('cother'), other, css('--other'));
 
   if (raw.length) {
     const last = raw.slice(-FS);
@@ -653,7 +650,6 @@ function render() {
       `raw LED ${a.rawLed}, raw ambient ${a.rawAmb}, sample rate ${a.fs.toFixed(2)} Hz, motion ${a.motion * 8} mg`;
     if (a.state && current !== a.current) { current = a.current; showLed(); }
   }
-  if (other.length) $('otherinfo').textContent = `${other[other.length - 1]}`;
   renderSpo2();
   renderHrv();
 
