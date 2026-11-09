@@ -222,8 +222,8 @@
   </div>
 </main>
 
-<script>
-'use strict';
+<script type="module">
+import { drawSeries } from '../shared/plot.js';
 const SERVICE = '00112233-4455-6677-8899-aabbccddeeff';
 const PPG = 'e7da0718-b8b6-44b6-912c-e0bfb05d562d';
 const FS = 25;                 // samples per second and channel (stock setup)
@@ -505,73 +505,12 @@ function updateTrend() {
   if (trend.length > TREND_MAX) trend.shift();
 }
 
-// ---- drawing ----
-function draw(canvas, data, color, opts = {}) {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if (!opts.overlay) {  // overlay: draw over the previous trace (own scale)
-    ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
-    for (let s = 1; s < 10; s++) { const x = Math.round(w * s / 10) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-  }
-  if (data.length < 2) return;
-  let min = Math.min(...data), max = Math.max(...data);
-  if (max === min) { max += 1; min -= 1; }
-  const pad = (max - min) * 0.08;
-  const span = opts.span || WINDOW;
-  ctx.strokeStyle = color; ctx.lineWidth = opts.width || 1.5; ctx.lineJoin = 'round';
-  ctx.beginPath();
-  const x0 = w * (1 - data.length / span);
-  data.forEach((v, i) => {
-    const x = x0 + (i / (span - 1)) * w;
-    const y = h - ((v - min + pad) / (max - min + 2 * pad)) * h;
-    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  });
-  ctx.stroke();
-}
-
-// Time series with gaps (NaN) on a fixed span, with its range written on the right
-function drawSeries(canvas, values, color, span, fmt = v => v.toFixed(0)) {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-  ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
-  for (let s = 1; s < 10; s++) { const x = Math.round(w * s / 10) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-  const ok = values.filter(v => Number.isFinite(v));
-  if (!ok.length) return null;
-  let min = Math.min(...ok), max = Math.max(...ok);
-  if (max - min < 1e-6) { max += 1; min -= 1; }
-  const pad = (max - min) * 0.12, x0 = w * (1 - values.length / span);
-  const X = i => x0 + (i / (span - 1)) * w, Y = v => h - ((v - min + pad) / (max - min + 2 * pad)) * h;
-  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1.8; ctx.lineJoin = 'round';
-  ctx.beginPath();
-  let pen = false;
-  values.forEach((v, i) => {
-    if (!Number.isFinite(v)) { pen = false; return; }
-    pen ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v));
-    pen = true;
-  });
-  ctx.stroke();
-  values.forEach((v, i) => {  // isolated points
-    if (Number.isFinite(v) && !Number.isFinite(values[i - 1]) && !Number.isFinite(values[i + 1])) {
-      ctx.beginPath(); ctx.arc(X(i), Y(v), 1.8, 0, 2 * Math.PI); ctx.fill();
-    }
-  });
-  ctx.fillStyle = css('--muted'); ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'right';
-  ctx.fillText(fmt(max), w - 4, 12); ctx.fillText(fmt(min), w - 4, h - 4);
-  return {min, max, last: ok[ok.length - 1]};
-}
+// ---- drawing: apps/shared/plot.js ----
 
 function renderHrv() {
   const st = hrvNow();
   const recent = hrv.ibis.slice(-120).map(e => e.ibi);
-  drawSeries($('ctacho'), recent, css('--ir'), 120);
+  drawSeries($('ctacho'), recent, css('--ir'), {span: 120, width: 1.8, labels: true});
   $('hrvcount').textContent = recent.length ? `${recent.length} intervals` : '';
   const enough = st && st.n >= 20;
   $('rmssd').textContent = enough ? Math.round(st.rmssd) : '--';
@@ -586,7 +525,7 @@ function renderHrv() {
     : enough ? 'last minute' : `Collecting beats (${st ? st.n : 0} / 20)…`;
   const fmt1 = v => v.toFixed(1);
   const show = (id, canvas, key, color, fmt, unit) => {
-    const r = drawSeries($(canvas), trend.map(p => p[key]), css(color), TREND_MAX, fmt);
+    const r = drawSeries($(canvas), trend.map(p => p[key]), css(color), {span: TREND_MAX, width: 1.8, labels: true, format: fmt});
     $(id).textContent = r ? `now ${fmt(r.last)} ${unit} · range ${fmt(r.min)}-${fmt(r.max)}` : '';
   };
   show('trendhr', 'trhr', 'hr', '--green', fmt1, 'bpm');
@@ -600,8 +539,8 @@ function render() {
   document.documentElement.style.setProperty('--led', color);
   const raw = traces[1];
   const ac = pulseOf(raw);
-  draw($('cpulse'), ac, color, {width: 2.2, span: WINDOW - Math.round(1.5 * FS)});
-  draw($('craw'), raw, color);
+  drawSeries($('cpulse'), ac, color, {width: 2.2, span: WINDOW - Math.round(1.5 * FS)});
+  drawSeries($('craw'), raw, color, {span: WINDOW});
 
   if (raw.length) {
     const last = raw.slice(-FS);
@@ -668,12 +607,12 @@ function renderSpo2() {
     $('spo2').textContent = '--';
     $('spo2info').textContent = $('spo2on').checked && ppg ? 'Starting…' : 'Off';
     $('spo2detail').textContent = ''; $('spo2corr').textContent = '';
-    draw($('cspo2'), [], css('--red'));
+    drawSeries($('cspo2'), [], css('--red'));
     return;
   }
   const span = WINDOW - Math.round(1.5 * FS);
-  draw($('cspo2'), pulseOf(redT), css('--red'), {span, width: 1.8});
-  draw($('cspo2'), pulseOf(irT), css('--ir'), {span, width: 1.8, overlay: true});
+  drawSeries($('cspo2'), pulseOf(redT), css('--red'), {span, width: 1.8});
+  drawSeries($('cspo2'), pulseOf(irT), css('--ir'), {span, width: 1.8, overlay: true});
   $('spo2corr').textContent = a.ratio ? `correlation ${a.corr} %` : '';
   const noLeak = !a.leak[0] && !a.leak[1];
   let info;

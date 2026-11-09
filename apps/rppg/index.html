@@ -140,8 +140,8 @@
   </div>
 </main>
 
-<script>
-'use strict';
+<script type="module">
+import { drawSeries } from '../shared/plot.js';
 // ---- signal processing: pure functions (no DOM), also loaded by the node test ----
 const FS = 30;        // resampled rate (Hz)
 const PROC_S = 20;    // seconds processed on each frame
@@ -430,46 +430,20 @@ function restartMeasure() {
   $('conf').textContent = stream ? 'Measuring…' : 'Start the camera, then keep still in good light';
 }
 
-// ---- drawing ----
-function draw(canvas, data, color, opts = {}) {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if (opts.clear !== false) {
-    ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
-    for (let s = 1; s < 10; s++) { const x = Math.round(w * s / 10) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-  }
-  if (data.length < 2) return;
-  let min = opts.min ?? Math.min(...data), max = opts.max ?? Math.max(...data);
-  if (max === min) { max += 1; min -= 1; }
-  const pad = (max - min) * 0.08;
-  const span = opts.span || WIN_S * FS;
-  ctx.strokeStyle = color; ctx.lineWidth = opts.width || 1.5; ctx.lineJoin = 'round';
-  ctx.beginPath();
-  const x0 = w * (1 - data.length / span);
-  data.forEach((v, i) => {
-    const x = x0 + (i / (span - 1)) * w;
-    const y = h - ((v - min + pad) / (max - min + 2 * pad)) * h;
-    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  });
-  ctx.stroke();
-}
+// ---- drawing: apps/shared/plot.js ----
 function drawCharts(s) {
   const span = WIN_S * FS;
   const pulse = s ? s.pulse.slice(Math.max(WARM_S * FS, s.pulse.length - span)) : [];
-  draw($('cpulse'), pulse, css('--green'), {width: 2.2});
+  drawSeries($('cpulse'), pulse, css('--green'), {width: 2.2, span});
   const ch = s ? ['r', 'g', 'b'].map(c => {
     const x = s[c].slice(-span), m = mean(x);
     return x.map(v => 100 * (v / m - 1));
   }) : [[], [], []];
   const all = ch.flat();
   const lim = all.length ? {min: Math.min(...all), max: Math.max(...all)} : {};
-  draw($('crgb'), ch[0], css('--red'), lim);
-  draw($('crgb'), ch[1], css('--green'), {...lim, clear: false});
-  draw($('crgb'), ch[2], css('--blue'), {...lim, clear: false});
+  drawSeries($('crgb'), ch[0], css('--red'), {...lim, span});
+  drawSeries($('crgb'), ch[1], css('--green'), {...lim, span, overlay: true});
+  drawSeries($('crgb'), ch[2], css('--blue'), {...lim, span, overlay: true});
   if (pulse.length) {
     const recent = pulse.slice(-4 * FS);
     $('pulseinfo').textContent = `amplitude ${(100 * (Math.max(...recent) - Math.min(...recent))).toFixed(2)} %`;

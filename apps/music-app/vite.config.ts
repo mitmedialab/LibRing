@@ -4,6 +4,8 @@ import { resolve } from 'path';
 export default defineConfig({
     root: '.',
     server: {
+        // apps/shared (plot library shared with the plain HTML apps)
+        fs: { allow: ['..'] },
         port: 3001,
         open: true,
     },
