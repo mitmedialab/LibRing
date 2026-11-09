@@ -235,7 +235,7 @@ const LEDS = {green: 0x10, red: 0x40, ir: 0x20};
 const REG_LED_CUR = 0x28, REG_ON_TIME = 0x1e;
 const CMD_AGC = 0xfc, CMD_LED = 0xfb;  // [0xFC, on], [0xFB, LED select]
 const CMD_MODE = 0xfa, CMD_LEAK = 0xf9, CMD_LEAK_MEASURE = 0xf8; // [0xFA, 0 HR / 1 SpO2], [0xF9, red, IR (u16)], [0xF8]
-const HEADER = 35;                      // PPG_HEADER, ppg_read() in src/ppg/hx3605.h
+const HEADER = 35;                      // PPG_HEADER, ppg_read() in src/ppg/HX3918.h
 const AGC_STATES = ['manual', 'starting', 'setting current', 'setting offset', 'locked'];
 
 const REGS = [

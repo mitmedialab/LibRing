@@ -5,7 +5,7 @@
 
 The ring runs the stock heart-rate setup (25 Hz) while subscribed. --write writes
 registers after the start, --read reads registers (before and after streaming).
-Packet format: ppg_read() in src/ppg/hx3605.h.
+Packet format: ppg_read() in src/ppg/HX3918.h.
 Requires: pip install bleak
 """
 import argparse
@@ -20,7 +20,7 @@ import time
 from bleak import BleakClient, BleakScanner
 
 PPG_CHAR = "e7da0718-b8b6-44b6-912c-e0bfb05d562d"
-HEADER = 35  # PPG_HEADER, ppg_read() in src/ppg/hx3605.h
+HEADER = 35  # PPG_HEADER, ppg_read() in src/ppg/HX3918.h
 FS = 25.0  # Hz (ppg_start())
 
 
@@ -29,7 +29,7 @@ def u24(b, i):
 
 
 def fifo_sample(b, i):
-    """(value, phase flag) as hx3605_read_fifo_data(): 21-bit signed, flag in bits 21-22."""
+    """(value, phase flag) as hx3918_read_fifo_data() (vendor driver): 21-bit signed, flag in bits 21-22."""
     raw = u24(b, i)
     value = raw & 0x1FFFFF
     if value & 0x100000:

@@ -1,5 +1,5 @@
-#ifndef _HX3605_H_
-#define _HX3605_H_
+#ifndef _HX3918_H_
+#define _HX3918_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,25 +11,25 @@
 // LEDs on the SR08: LDR0 green, LDR1 IR, LDR2 red. Main registers: 0x16 phase enable,
 // 0x18/0x19 period (32000 / Hz), 0x1c-0x1f LED on-time per phase, 0x23 LED enables,
 // 0x26-0x29 LED current per phase (0-255 = 0-200 mA), 0x2a/0x2b LED driver select.
-#define HX3605_I2C_ADDR     0x44
-#define HX3605_REG_CHIP_ID  0x00
-#define HX3605_REG_SLEEP    0x01 // 0x00: awake, 0x01: sleep (reference driver)
+#define HX3918_I2C_ADDR     0x44
+#define HX3918_REG_CHIP_ID  0x00
+#define HX3918_REG_SLEEP    0x01 // 0x00: awake, 0x01: sleep (reference driver)
 
-// Register access. The I2C target address is switched to the HX3605 and restored
+// Register access. The I2C target address is switched to the HX3918 and restored
 // afterwards (the accelerometer driver relies on it). The I2C controller must be
 // initialized (accel_init()). Return false on an I2C error.
-bool hx3605_read_regs(uint8_t reg, uint8_t *buf, uint8_t len);
-bool hx3605_write_reg(uint8_t reg, uint8_t value);
+bool hx3918_read_regs(uint8_t reg, uint8_t *buf, uint8_t len);
+bool hx3918_write_reg(uint8_t reg, uint8_t value);
 
 // ---- Streaming ----
 // The setup is the one of the stock firmware (Stock_V160.bin), recorded by emulating
 // its heart-rate mode (25 Hz, FIFO). It leaves the green LED (phase 2 current, 0x28)
 // at 0: the stock firmware's gain control raises it during a measurement. ~2 (1.6 mA)
 // suits a finger (0x08 already saturates).
-#define HX3605_REG_FIFO_CTRL  0x3d // FIFO enable + data select (0x83 in HR mode)
-#define HX3605_REG_FIFO_COUNT 0x40
-#define HX3605_REG_FIFO_DATA  0x41 // 3 bytes per sample
-#define HX3605_FIFO_DEPTH     64
+#define HX3918_REG_FIFO_CTRL  0x3d // FIFO enable + data select (0x83 in HR mode)
+#define HX3918_REG_FIFO_COUNT 0x40
+#define HX3918_REG_FIFO_DATA  0x41 // 3 bytes per sample
+#define HX3918_FIFO_DEPTH     64
 
 // Wakes the chip, checks its ID (0x27), starts the stock heart-rate setup and the
 // automatic gain control with the green LED (heart-rate mode). Returns false if the
@@ -113,4 +113,4 @@ enum ppg_agc_state { PPG_AGC_OFF, PPG_AGC_START, PPG_AGC_CURRENT, PPG_AGC_OFFSET
 // Fills packet, returns its length (0 on an I2C error)
 uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX]);
 
-#endif // _HX3605_H_
+#endif // _HX3918_H_

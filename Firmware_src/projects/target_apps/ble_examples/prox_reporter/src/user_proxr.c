@@ -34,7 +34,7 @@
 #include "user_custs1_impl.h"
 
 #include "fluid/fluid_5x25.h"
-#include "ppg/hx3605.h"
+#include "ppg/HX3918.h"
 
 #include "battery.h"
 
@@ -545,11 +545,11 @@ void user_ppg_config(const uint8_t *value, uint16_t len) {
             memset(LED_overlay, 0, sizeof(LED_overlay));
         }
     } else if (len == 2) {
-        hx3605_write_reg(value[0], value[1]);
+        hx3918_write_reg(value[0], value[1]);
     } else if (len == 3 && value[0] == 0xFE && value[2] <= 16) {
         uint8_t result[3 + 16];
         memcpy(result, value, 3);
-        if (hx3605_read_regs(value[1], &result[3], value[2])) {
+        if (hx3918_read_regs(value[1], &result[3], value[2])) {
             set_ppg_value(result, 3 + value[2]);
             ppg_hold = 10;
         }

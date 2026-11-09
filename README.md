@@ -49,7 +49,7 @@ Custom service `00112233-4455-6677-8899-aabbccddeeff`, characteristics:
 |---|---|---|
 | Accelerometer | `f2909165-4ce5-8da2-4c10-8b38c19f65cc` | notify, ~11 Hz: X, Y, Z (int16, big endian; `>> 4` gives mg / 8 at ±16 g), range code (byte 6, 3 = ±16 g) |
 | Touch | `368d553d-154a-1aa8-3f46-2e87b5e5cd54` | notify: 1 = touched, 0 = released |
-| PPG | `e7da0718-b8b6-44b6-912c-e0bfb05d562d` | notify, 10 packets/s: raw sensor samples (24.2 Hz) and ring-computed heart rate, SpO2, motion level. Layout: `ppg_read()` in `src/ppg/hx3605.h`; commands (heart-rate / SpO2 mode, LED control, register access): `user_ppg_config()` in `src/user_proxr.c` |
+| PPG | `e7da0718-b8b6-44b6-912c-e0bfb05d562d` | notify, 10 packets/s: raw sensor samples (24.2 Hz) and ring-computed heart rate, SpO2, motion level. Layout: `ppg_read()` in `src/ppg/HX3918.h`; commands (heart-rate / SpO2 mode, LED control, register access): `user_ppg_config()` in `src/user_proxr.c` |
 | Control point | `2d86686a-53dc-25b3-0c4a-f0e10c8dee20` | write |
 
 Subscribing to a characteristic starts its sensor; unsubscribing or disconnecting stops it. Python examples (with `bleak`): `Eclipse/ppg_stream.py`, `Eclipse/ppg_ctl.py`.

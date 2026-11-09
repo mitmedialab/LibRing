@@ -1,4 +1,4 @@
-#include "hx3605.h"
+#include "HX3918.h"
 
 #include <string.h>
 
@@ -36,17 +36,17 @@ static bool read_regs_at(uint16_t addr, uint8_t reg, uint8_t *buf, uint8_t len)
     return abort_code == I2C_ABORT_NONE;
 }
 
-bool hx3605_read_regs(uint8_t reg, uint8_t *buf, uint8_t len)
+bool hx3918_read_regs(uint8_t reg, uint8_t *buf, uint8_t len)
 {
-    return read_regs_at(HX3605_I2C_ADDR, reg, buf, len);
+    return read_regs_at(HX3918_I2C_ADDR, reg, buf, len);
 }
 
-bool hx3605_write_reg(uint8_t reg, uint8_t value)
+bool hx3918_write_reg(uint8_t reg, uint8_t value)
 {
     i2c_abort_t abort_code;
     uint8_t data[2] = {reg, value};
     uint16_t previous = i2c_get_target_address();
-    i2c_set_target(HX3605_I2C_ADDR);
+    i2c_set_target(HX3918_I2C_ADDR);
     i2c_master_transmit_buffer_sync(data, 2, &abort_code, I2C_F_WAIT_FOR_STOP);
     i2c_set_target(previous);
     return abort_code == I2C_ABORT_NONE;
@@ -179,7 +179,7 @@ static bool write_table(const uint8_t (*table)[2], unsigned count)
 {
     bool ok = true;
     for (unsigned i = 0; i < count; i++) {
-        ok &= hx3605_write_reg(table[i][0], table[i][1]);
+        ok &= hx3918_write_reg(table[i][0], table[i][1]);
     }
     return ok;
 }
@@ -189,9 +189,9 @@ bool ppg_start(void)
     // Wake up and chip check, as the stock firmware (0x07FC80B8)
     uint8_t id = 0;
     for (int i = 0; i < 10 && id != 0x27; i++) {
-        hx3605_write_reg(HX3605_REG_SLEEP, 0x00);
+        hx3918_write_reg(HX3918_REG_SLEEP, 0x00);
         delay_ms(5);
-        if (!hx3605_read_regs(HX3605_REG_CHIP_ID, &id, 1)) {
+        if (!hx3918_read_regs(HX3918_REG_CHIP_ID, &id, 1)) {
             id = 0;
         }
     }
@@ -260,7 +260,7 @@ static int32_t raw_phase[4];
 static void read_phases(void)
 {
     uint8_t b[12];
-    if (hx3605_read_regs(0x02, b, 12)) {
+    if (hx3918_read_regs(0x02, b, 12)) {
         for (int i = 0; i < 4; i++) {
             raw_phase[i] = b[3 * i] | (b[3 * i + 1] << 8) | ((int32_t)b[3 * i + 2] << 16);
         }
@@ -269,9 +269,9 @@ static void read_phases(void)
 
 static void agc_apply(void)
 {
-    hx3605_write_reg(0x28, agc.current);
-    hx3605_write_reg(0x2e, agc.led_idac);
-    hx3605_write_reg(AMB_IDAC_REG, agc.amb_idac);
+    hx3918_write_reg(0x28, agc.current);
+    hx3918_write_reg(0x2e, agc.led_idac);
+    hx3918_write_reg(AMB_IDAC_REG, agc.amb_idac);
 }
 
 void ppg_set_led(uint8_t led)
@@ -280,15 +280,15 @@ void ppg_set_led(uint8_t led)
     hr_restart();
     if (led == PPG_LED_OFF) {
         agc.current = 0;
-        hx3605_write_reg(0x28, 0);
+        hx3918_write_reg(0x28, 0);
         agc.state = PPG_AGC_OFF;
         return;
     }
     // phase 2 LED driver; phase 3: none (ambient) in heart-rate mode, IR in SpO2 mode
-    hx3605_write_reg(0x2b, led | (mode == PPG_MODE_SPO2 ? LDR_IR_PHASE3 : 0));
+    hx3918_write_reg(0x2b, led | (mode == PPG_MODE_SPO2 ? LDR_IR_PHASE3 : 0));
     agc.state = agc.enabled ? PPG_AGC_START : PPG_AGC_OFF;
     if (!agc.enabled) {
-        hx3605_write_reg(0x28, agc.current);
+        hx3918_write_reg(0x28, agc.current);
     }
 }
 
@@ -298,7 +298,7 @@ void ppg_agc_enable(bool enable)
     if (!enable) {
         agc.state = PPG_AGC_OFF;
         // keep the current settings, let the client change them
-        hx3605_read_regs(0x28, &agc.current, 1);
+        hx3918_read_regs(0x28, &agc.current, 1);
     } else if (agc.led != PPG_LED_OFF) {
         agc.state = PPG_AGC_START;
     }
@@ -318,8 +318,8 @@ static void agc_step(void)
         agc.current = AGC_INIT_CURRENT;
         agc.led_idac = 0;
         agc.amb_idac = 0;
-        hx3605_write_reg(0x1e, AGC_ON_TIME);
-        hx3605_write_reg(AMB_PHASE == 3 ? 0x1f : 0x1c, AGC_ON_TIME);
+        hx3918_write_reg(0x1e, AGC_ON_TIME);
+        hx3918_write_reg(AMB_PHASE == 3 ? 0x1f : 0x1c, AGC_ON_TIME);
         agc_apply();
         agc.state = PPG_AGC_CURRENT;
         break;
@@ -346,7 +346,7 @@ static void agc_step(void)
             agc.out_count = 0;
             break;
         }
-        hx3605_write_reg(0x2e, agc.led_idac);
+        hx3918_write_reg(0x2e, agc.led_idac);
         break;
     case PPG_AGC_LOCKED:
         if (led < AGC_RECAL_LOW || led > AGC_RECAL_HIGH) {
@@ -375,8 +375,8 @@ static void spo2_restart(void)
 
 static void spo2_channel_write(struct spo2_ch *c)
 {
-    hx3605_write_reg(c->cur_reg, c->current);
-    hx3605_write_reg(c->idac_reg, c->idac);
+    hx3918_write_reg(c->cur_reg, c->current);
+    hx3918_write_reg(c->idac_reg, c->idac);
 }
 
 bool ppg_set_mode(uint8_t new_mode)
@@ -472,13 +472,13 @@ static void spo2_channel_step(struct spo2_ch *c)
         idac = 0;
         if (raw <= RAW_CLIP_LOW && c->current < 100) { // too little light
             c->current *= 2;
-            hx3605_write_reg(c->cur_reg, c->current);
+            hx3918_write_reg(c->cur_reg, c->current);
         }
     } else if (idac > 255) {
         idac = 255;
         if (c->current > 1) { // too much light
             c->current /= 2;
-            hx3605_write_reg(c->cur_reg, c->current);
+            hx3918_write_reg(c->cur_reg, c->current);
         }
     }
     if (idac != c->idac) {
@@ -487,7 +487,7 @@ static void spo2_channel_step(struct spo2_ch *c)
             c->step = (int8_t)(idac - c->idac);
         }
         c->idac = (uint8_t)idac;
-        hx3605_write_reg(c->idac_reg, c->idac);
+        hx3918_write_reg(c->idac_reg, c->idac);
     }
     spo2_restart();
 }
@@ -530,32 +530,32 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
     uint8_t count = 0;
     uint8_t n = 0;
 
-    if (!hx3605_read_regs(HX3605_REG_FIFO_COUNT, &count, 1)) {
+    if (!hx3918_read_regs(HX3918_REG_FIFO_COUNT, &count, 1)) {
         return 0;
     }
-    // As the reference hx3605_read_fifo_data() (registers + 0x10): leave one
+    // As hx3605_read_fifo_data() of the HX3605 reference driver (registers + 0x10): leave one
     // sample in the FIFO, drop the first one after a reset
-    if (count >= 2 && count <= HX3605_FIFO_DEPTH) {
+    if (count >= 2 && count <= HX3918_FIFO_DEPTH) {
         if (fifo_first_read) {
             uint8_t dummy[3];
-            hx3605_read_regs(HX3605_REG_FIFO_DATA, dummy, 3);
+            hx3918_read_regs(HX3918_REG_FIFO_DATA, dummy, 3);
             fifo_first_read = false;
         }
         n = count - 1;
         if (n > PPG_MAX_SAMPLES) {
             n = PPG_MAX_SAMPLES;
         }
-        if (!hx3605_read_regs(HX3605_REG_FIFO_DATA, &packet[PPG_HEADER], 3 * n)) {
+        if (!hx3918_read_regs(HX3918_REG_FIFO_DATA, &packet[PPG_HEADER], 3 * n)) {
             n = 0;
         }
     }
-    if (count >= HX3605_FIFO_DEPTH) {
+    if (count >= HX3918_FIFO_DEPTH) {
         // FIFO full (samples lost): reset it, as the stock firmware (0x07FC85EA)
         uint8_t ctrl = mode == PPG_MODE_SPO2 ? 0x80 : 0x83;
-        hx3605_read_regs(HX3605_REG_FIFO_CTRL, &ctrl, 1);
-        hx3605_write_reg(HX3605_REG_FIFO_CTRL, 0x00);
+        hx3918_read_regs(HX3918_REG_FIFO_CTRL, &ctrl, 1);
+        hx3918_write_reg(HX3918_REG_FIFO_CTRL, 0x00);
         delay_ms(5);
-        hx3605_write_reg(HX3605_REG_FIFO_CTRL, ctrl);
+        hx3918_write_reg(HX3918_REG_FIFO_CTRL, ctrl);
         fifo_first_read = true;
     }
     // LED channel samples -> sample rate, heart rate; red/IR -> SpO2. Heart-rate mode:
