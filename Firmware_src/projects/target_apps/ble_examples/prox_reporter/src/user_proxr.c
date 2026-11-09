@@ -248,6 +248,9 @@ void LED_GPIO_mode(uint8_t mode)
         }
 }
 
+// Fluid simulation steps per 10 ms tick (fluid_timer_cb): 2 = 200 steps/s
+#define FLUID_STEPS_PER_TICK 2
+
 void refreshMenu()
 {
         //LED_Buff_setInt(counter_time, LED_Buffer, 5);
@@ -291,7 +294,9 @@ void refreshMenu()
             if (down_0_1 < 0.0f) down_0_1 = 0.0f;
             if (down_0_1 > 1.0f) down_0_1 = 1.0f;
 
-            fluid_5x25_step(&g_fluid, left_0_1, down_0_1);
+            for (int i = 0; i < FLUID_STEPS_PER_TICK; i++) {
+                fluid_5x25_step(&g_fluid, left_0_1, down_0_1);
+            }
 
             // LED driver expects 5 segment bytes.
             fluid_5x25_to_segments(&g_fluid, LED_Buffer);
@@ -303,11 +308,42 @@ void refreshMenu()
         }
 }
 
+// LEDs of a display line at a tick of its slot: the display content (not with the
+// display off), the test overlay and the indicators during LED_ON_TICKS, the charge
+// indicators (line 5) during LED_CHARGE_TICKS
+static uint8_t line_bits(int line, uint8_t tick)
+{
+    uint8_t bits = 0;
+    if (tick < LED_ON_TICKS && display_mode != DISPLAY_OFF) {
+        bits = LED_Buffer[line] | LED_overlay[line] | (line == 5 ? LED_indicators : 0);
+    }
+    if (line == 5 && tick < LED_CHARGE_TICKS) {
+        bits |= LED_charge_indicators;
+    }
+    return bits;
+}
+
+// Every 0.25 ms (timer0): brightness within the line slot (see LED_TICKS_PER_LINE)
 static void timer_cb(void)
 {
-    // static uint8_t accel_counter = 0; 
-
-    if(LED_Display_state) {
+    static uint8_t line_tick = 0, shown = 0;
+    if (!LED_Display_state) {
+        return;
+    }
+    if (++line_tick < LED_TICKS_PER_LINE) {
+        uint8_t bits = line_bits(current_line, line_tick);
+        if (bits != shown) {
+            if (bits) {
+                LED_segments(bits);
+            } else {
+                LED_line_off(current_line);
+            }
+            shown = bits;
+        }
+        return;
+    }
+    line_tick = 0;
+    {
         // on each timer callback, swap LED lines so that each line is written to
         // after each line has been written to, refresh the menu
             current_line++;
@@ -330,7 +366,8 @@ static void timer_cb(void)
                     }
             }
 
-            LED_write(LED_Buffer, current_line);
+            shown = line_bits(current_line, 0);
+            LED_line_on(current_line, shown);
     }
 }
 
@@ -419,6 +456,49 @@ void user_ppg_streaming(bool enable) {
     }
 }
 
+static uint16_t fluid_steps, fluid_calls;
+static uint32_t fluid_busy; // 625 us slots spent in refreshMenu() (fluid)
+
+// Battery reading (P0_1, ADC, battery through a divider; ~323 at rest when full,
+// ~329 on the charger), mean of 4 samples
+static uint16_t battery_adc(void)
+{
+    adc_config_t cfg = { .mode = ADC_INPUT_MODE_SINGLE_ENDED, .sign = false, .attn = true };
+    adc_init(&cfg);
+    arch_asm_delay_us(20);
+    adc_set_se_input(ADC_INPUT_SE_P0_1);
+    uint32_t sum = 0;
+    for (int i = 0; i < 4; i++) {
+        sum += adc_get_sample();
+    }
+    adc_disable();
+    return (uint16_t)((sum + 2) / 4);
+}
+
+// [0xF5]: fluid step rate since the last read, charging pin, battery ADC readings
+static void debug_read(void)
+{
+    static uint32_t last_time;
+    uint32_t now = lld_evt_time_get(); // 625 us units
+    uint16_t ms = (uint16_t)((((now - last_time) & 0x07FFFFFF) * 625) / 1000);
+    last_time = now;
+
+    uint16_t p01 = battery_adc();
+    adc_config_t cfg = { .mode = ADC_INPUT_MODE_SINGLE_ENDED, .sign = false, .attn = true };
+    adc_init(&cfg);
+    uint16_t vbat = (uint16_t)adc_get_vbat_sample(false);
+    adc_disable();
+
+    uint16_t busy_ms = (uint16_t)(fluid_busy * 625 / 1000);
+    uint8_t r[14] = {0xF5, fluid_steps, fluid_steps >> 8, fluid_calls, fluid_calls >> 8,
+                     ms, ms >> 8, GPIO_GetPinStatus(GPIO_PORT_0, GPIO_PIN_7),
+                     p01, p01 >> 8, vbat, vbat >> 8, busy_ms, busy_ms >> 8};
+    fluid_steps = fluid_calls = 0;
+    fluid_busy = 0;
+    set_ppg_value(r, sizeof(r));
+    ppg_hold = 10;
+}
+
 // Register access from the client, to experiment (writes to the PPG characteristic):
 //   [reg, value]        write a register
 //   [0xFE, reg, n]      read n registers (n <= 16): the characteristic value becomes
@@ -430,6 +510,10 @@ void user_ppg_streaming(bool enable) {
 //                       (ppg_set_leak(): the client keeps it, e.g. per ring name)
 //   [0xF8]              measure the SpO2 optical leak (ring off the finger, in the dark)
 //   [0xF7, red, IR]     SpO2 LED currents (0: default)
+//   [0xF5]              debug read, characteristic value [0xF5, fluid steps (2 bytes),
+//                       fluid timer calls (2), time (2, ms), charging pin P0_7,
+//                       ADC P0_1 (2), VBAT3V (2), fluid busy time (2, ms)] (little
+//                       endian), counters reset
 //   [0xF6, line, mask]  display test: also light the LEDs of mask (bit i = segment i)
 //                       on line 0-5 (5: P2_9, not used by the display); line 0xFF:
 //                       clear all
@@ -452,6 +536,8 @@ void user_ppg_config(const uint8_t *value, uint16_t len) {
         ppg_measure_leak();
     } else if (len == 3 && value[0] == 0xF7) {
         ppg_set_spo2_currents(value[1], value[2]);
+    } else if (len == 1 && value[0] == 0xF5) {
+        debug_read();
     } else if (len == 3 && value[0] == 0xF6) {
         if (value[1] < 6) {
             LED_overlay[value[1]] = value[2] & 0x7F;
@@ -505,12 +591,58 @@ static void ppg_poll(void) {
 }
 // ---- end PPG streaming ----
 
+// Charge indicators, every 100 ms (main timer), while the charger charges (P0_7 low):
+// red heart, then green steps once the battery reading stops rising (the charger's
+// constant-voltage phase, ~80-90 %: "full", as generous as the stock firmware's 100 %).
+// The reading can't be compared with a fixed level: the charging current raises it
+// (ring C7: 311 off the charger, 331 on it). Green stays until the ring leaves the
+// charger. Off the charger (or once the charger has finished, P0_7 high): off.
+// With the display off, the LED scan runs for these indicators alone.
+#define CHARGE_PLATEAU_S 300 // no new high of the reading for 5 min: green
+static void update_charging(void)
+{
+    static uint16_t sum, peak_x10, flat_s;
+    static uint8_t ticks;
+    static bool full;
+    if (GPIO_GetPinStatus(GPIO_PORT_0, GPIO_PIN_7)) { // not charging
+        sum = peak_x10 = flat_s = ticks = 0;
+        full = false;
+        LED_charge_indicators = 0;
+    } else {
+        sum += battery_adc();
+        if (++ticks == 10) { // every second: mean reading x10
+            uint16_t mean_x10 = sum;
+            sum = ticks = 0;
+            if (mean_x10 >= peak_x10 + 10) { // new high by >= 1 count: still rising
+                peak_x10 = mean_x10;
+                flat_s = 0;
+            } else if (++flat_s >= CHARGE_PLATEAU_S) {
+                full = true;
+            }
+        }
+        LED_charge_indicators = full ? LED_IND_STEPS : LED_IND_HEART;
+    }
+
+    bool lit = LED_charge_indicators != 0;
+    if (display_started && display_mode == DISPLAY_OFF) {
+        if (lit && !LED_Display_state) {
+            LED_GPIO_mode(1);
+        } else if (!lit && LED_Display_state) {
+            LED_GPIO_mode(0);
+            if (display_off_keeps_awake) {
+                arch_force_active_mode(); // LED_GPIO_mode(0) restored the sleep mode
+            }
+        }
+    }
+}
+
 static void main_timer_cb(void) {
 
     if (suota_active) {
         start_main_timer();
         return;
     }
+    update_charging();
 
     if (accel_streaming) {
         read_and_notify_accel();
@@ -678,8 +810,8 @@ void start_refresh_timer(void)
         timer0_set_pwm_low_counter(0);
         // Set timer with 2MHz source clock divided by 10 so Fclk = 2MHz/10 = 200kHz
         timer0_init(TIM0_CLK_FAST, PWM_MODE_ONE, TIM0_CLK_DIV_BY_10);
-        // reload value for 100ms (T = 1/200kHz * RELOAD_100MS = 0,000005 * 20000 = 100ms)
-        timer0_set_pwm_on_counter(300);
+        // Period: 50 / 200 kHz = 0.25 ms (6 ticks per display line, see LED_TICKS_PER_LINE)
+        timer0_set_pwm_on_counter(50);
         timer0_register_callback(timer_cb);
 }
 
@@ -866,9 +998,13 @@ void user_app_on_init(void)
 // Running it here (main loop, not an interrupt) keeps it from starving BLE.
 static void fluid_timer_cb(void)
 {
+    fluid_calls++;
     if (!suota_active && user_state == FLUID_MODE && LED_Display_state
             && display_mode == DISPLAY_FLUID) {
+        uint32_t t0 = lld_evt_time_get();
         refreshMenu(); // fluid step + LED_Buffer update
+        fluid_busy += (lld_evt_time_get() - t0) & 0x07FFFFFF;
+        fluid_steps += FLUID_STEPS_PER_TICK;
     }
     fluid_timer_hnd = app_easy_timer(1, fluid_timer_cb); // 10 ms
 }

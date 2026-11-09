@@ -2,6 +2,13 @@
 
 #include <string.h>
 
+// The fluid steps 200 times per second (user_proxr.c) on a Cortex-M0 without a
+// divider: optimize this file for speed (the firmware is built with -Os)
+#pragma GCC optimize ("O2")
+
+// 65536 / n rounded up, n = 1..5: (a * recip_q16[n]) >> 16 == a / n for a <= 5 * 255
+static const uint32_t recip_q16[6] = {0, 65536, 32768, 21846, 16384, 13108};
+
 static float clamp01(float x)
 {
     if (x < 0.0f) return 0.0f;
@@ -201,7 +208,7 @@ void fluid_5x25_step(fluid_5x25_t *f, float left_0_1, float down_0_1)
             if (x + 1 < FLUID_5X25_W) { a += next[x + 1][y]; n++; }
             if (y > 0) { a += next[x][y - 1]; n++; }
             if (y + 1 < FLUID_5X25_H) { a += next[x][y + 1]; n++; }
-            uint16_t avg = (uint16_t)(a / n);
+            uint16_t avg = (uint16_t)((a * recip_q16[n]) >> 16); // a / n
             uint16_t cur = next[x][y];
             // cur = cur*7/8 + avg*1/8
             uint16_t blended = (uint16_t)((cur * 7u + avg) / 8u);

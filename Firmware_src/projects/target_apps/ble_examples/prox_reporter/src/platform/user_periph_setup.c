@@ -39,6 +39,7 @@ void GPIO_reservations(void)
     i.e. to reserve P0_1 as Generic Purpose I/O:
 */
     RESERVE_GPIO(BATTERY_ADC, GPIO_PORT_0, GPIO_PIN_1, PID_ADC);
+    RESERVE_GPIO(CHARGING, GPIO_PORT_0, GPIO_PIN_7, PID_GPIO);
     
     // Push Button
     RESERVE_GPIO(SPI_DI, GPIO_LEDC_PORT, GPIO_LEDC_PIN, PID_GPIO);
@@ -82,6 +83,10 @@ void set_pad_functions(void)
 
     // Configure P0_1 directly as Analog Input so ADC reads accurately
     GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_1, INPUT, PID_ADC, false);
+
+    // Charging input (low while charging); pull-up in case the charger output is
+    // open drain (the reset default, pull-down, would then always read charging)
+    GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_7, INPUT_PULLUP, PID_GPIO, false);
 
 #if (BLE_PROX_REPORTER)
     // Alert LED
