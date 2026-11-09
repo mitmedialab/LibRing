@@ -58,7 +58,7 @@ LDFLAGS := $(ARCH_FLAGS) -flto \
            -L$(SDK)/platform/system_library/output/Keil_5 \
            -L$(SDK)/common_project_files/misc
 
-LIBS := -l:da14585_586.lib
+LIBS := -l:da14585_586.lib -lm
 
 # ── Include paths ─────────────────────────────────────────────────────────────
 # Auto-discover every directory containing a .h file; exclude tool-specific trees.

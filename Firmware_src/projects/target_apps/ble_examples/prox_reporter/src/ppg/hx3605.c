@@ -7,6 +7,7 @@
 #include "accelerometer.h"
 #include "lld_evt.h"
 #include "ppg_hr.h"
+#include "ppg_spo2.h"
 
 // The target address can only be changed while the I2C controller is disabled
 // (same sequence as set_dev_addr() in the SDK examples)
@@ -125,6 +126,55 @@ static const uint8_t stock_off[][2] = {
     {0x2a, 0x00}, {0x2b, 0x00}, {0x16, 0x00}, {0x01, 0x01},
 };
 
+// SpO2 mode, applied over the heart-rate setup: the vendor's phase layout
+// (hx3918_spo2_ppg_init(): an LED on phase 0 gets jumps in its readings) with green
+// kept for the heart rate: phase 0 dark, 1 red, 2 green, 3 IR. Red/IR currents and
+// offset DACs: spo2_channel_step(); phase 2/3 LED select (0x2b): ppg_set_led().
+static uint8_t mode = PPG_MODE_HR;
+static const uint8_t spo2_setup[][2] = {
+    {0x17, 0xff},                             // full resolution (OSR 1024) on all phases: the
+                                              // HR setup has 256 on phases 0/1 (saturates at ~32k)
+    {0x1c, 0x40}, {0x1d, 0x40}, {0x1e, 0x40}, {0x1f, 0x40}, // 128 us pulses
+    {0x2a, 0x04},                             // phase 0: no LED, phase 1: red (LDR2)
+    {0x23, 0x7f},                             // LEDs on phases 1-3, offset DACs on
+    {0x26, 0x00}, {0x2c, 0x00},
+    {0x3d, 0x00}, {0x3d, 0x80},               // FIFO reset, then the 4 raw phases (flag = phase)
+};
+#define LDR_IR_PHASE3 0x02  // 0x2b bits 3:0 in SpO2 mode
+
+// Red and IR channels. The LEDs are so close to the photodiode that they saturate
+// it even at the lowest current: the offset DAC of their phase (current subtracted
+// from the photodiode) keeps the raw reading in 150k-350k, ~140k counts per step.
+// A low current is enough (the signal-to-noise ratio doesn't improve with it).
+#define SPO2_RED_CURRENT 8
+#define SPO2_IR_CURRENT  24
+#define RAW_CLIP_LOW     20000   // the raw readings clip at ~1k and ~523k
+#define RAW_CLIP_HIGH    500000
+#define RAW_LOW          150000
+#define RAW_HIGH         350000
+#define RAW_TARGET       250000
+#define RAW_RECAL_LOW    100000
+#define RAW_RECAL_HIGH   400000
+static int32_t idac_counts = 140000; // raw counts per offset DAC step, measured on the go
+static struct spo2_ch {
+    uint8_t phase, cur_reg, idac_reg, current, idac, out_count;
+    bool locked;
+    int8_t step;    // last offset DAC change (for idac_counts)
+    int32_t before; // raw reading before it (0: none)
+} spo2_ch[2] = {
+    {1, 0x27, 0x2d, SPO2_RED_CURRENT},
+    {3, 0x29, 0x2f, SPO2_IR_CURRENT},
+};
+// Optical leak: light reaching the photodiode without going through the finger
+// (most of the red one), in 16 counts per LED current unit, set by the client
+// (ppg_set_leak()) or measured with the ring off the finger (ppg_measure_leak())
+static uint16_t spo2_leak[2];
+static uint8_t leak_polls;           // > 0: leak measurement running
+#define LEAK_POLLS 30                // 3 s of locked channels
+static int32_t dark_avg = 259000;    // dark phase reading (running average)
+static uint16_t spo2_ratio_x1000, spo2_x10;
+static uint8_t spo2_corr;
+
 static bool write_table(const uint8_t (*table)[2], unsigned count)
 {
     bool ok = true;
@@ -148,15 +198,11 @@ bool ppg_start(void)
     if (id != 0x27) {
         return false;
     }
-    fifo_first_read = true;
     fs_t0 = lld_evt_time_get();
     fs_count = 0;
     fs_x100 = FS_DEFAULT_X100;
-    if (!write_table(stock_hr_setup, sizeof(stock_hr_setup) / sizeof(stock_hr_setup[0]))) {
-        return false;
-    }
-    ppg_set_led(PPG_LED_GREEN);
-    return true;
+    ppg_set_led(PPG_LED_GREEN); // selected by ppg_set_mode() below
+    return ppg_set_mode(PPG_MODE_HR);
 }
 
 // ---- Automatic gain control (vendor hx3918_hrs_agc.c, PPG_hrs_Calibration_Routine) ----
@@ -205,8 +251,11 @@ static void fs_update(uint32_t led_samples)
     }
 }
 
-// Raw phase readings (vendor read_data_packet()): ps[2] LED (green), ps[3] ambient
+// Raw phase readings (vendor read_data_packet()): ps[2] LED (green); ambient (dark):
+// ps[3] in heart-rate mode, ps[0] in SpO2 mode (ps[1] red, ps[3] IR)
 static int32_t raw_phase[4];
+#define AMB_PHASE     (mode == PPG_MODE_SPO2 ? 0 : 3)
+#define AMB_IDAC_REG  (mode == PPG_MODE_SPO2 ? 0x2c : 0x2f)
 
 static void read_phases(void)
 {
@@ -222,7 +271,7 @@ static void agc_apply(void)
 {
     hx3605_write_reg(0x28, agc.current);
     hx3605_write_reg(0x2e, agc.led_idac);
-    hx3605_write_reg(0x2f, agc.amb_idac);
+    hx3605_write_reg(AMB_IDAC_REG, agc.amb_idac);
 }
 
 void ppg_set_led(uint8_t led)
@@ -235,7 +284,8 @@ void ppg_set_led(uint8_t led)
         agc.state = PPG_AGC_OFF;
         return;
     }
-    hx3605_write_reg(0x2b, led); // phase 2 LED driver (phase 3: none = ambient)
+    // phase 2 LED driver; phase 3: none (ambient) in heart-rate mode, IR in SpO2 mode
+    hx3605_write_reg(0x2b, led | (mode == PPG_MODE_SPO2 ? LDR_IR_PHASE3 : 0));
     agc.state = agc.enabled ? PPG_AGC_START : PPG_AGC_OFF;
     if (!agc.enabled) {
         hx3605_write_reg(0x28, agc.current);
@@ -261,7 +311,7 @@ static void agc_step(void)
         agc.wait--;
         return;
     }
-    int32_t led = raw_phase[2], amb = raw_phase[3];
+    int32_t led = raw_phase[2], amb = raw_phase[AMB_PHASE];
     switch (agc.state) {
     case PPG_AGC_START:
         hr_restart();
@@ -269,7 +319,7 @@ static void agc_step(void)
         agc.led_idac = 0;
         agc.amb_idac = 0;
         hx3605_write_reg(0x1e, AGC_ON_TIME);
-        hx3605_write_reg(0x1f, AGC_ON_TIME);
+        hx3605_write_reg(AMB_PHASE == 3 ? 0x1f : 0x1c, AGC_ON_TIME);
         agc_apply();
         agc.state = PPG_AGC_CURRENT;
         break;
@@ -313,6 +363,162 @@ static void agc_step(void)
     agc.wait = 1;
 }
 
+// ---- SpO2 mode: red and IR channels ----
+
+static void spo2_restart(void)
+{
+    ppg_spo2_reset();
+    spo2_ratio_x1000 = 0;
+    spo2_corr = 0;
+    spo2_x10 = 0;
+}
+
+static void spo2_channel_write(struct spo2_ch *c)
+{
+    hx3605_write_reg(c->cur_reg, c->current);
+    hx3605_write_reg(c->idac_reg, c->idac);
+}
+
+bool ppg_set_mode(uint8_t new_mode)
+{
+    mode = new_mode == PPG_MODE_SPO2 ? PPG_MODE_SPO2 : PPG_MODE_HR;
+    bool ok = write_table(stock_hr_setup, sizeof(stock_hr_setup) / sizeof(stock_hr_setup[0]));
+    if (mode == PPG_MODE_SPO2) {
+        ok &= write_table(spo2_setup, sizeof(spo2_setup) / sizeof(spo2_setup[0]));
+        for (int i = 0; i < 2; i++) {
+            // start with the offset of a typical ring (raw readings settle in < 1 s)
+            spo2_ch[i].idac = i == 0 ? 14 : 6;
+            spo2_ch[i].locked = false;
+            spo2_ch[i].before = 0;
+            spo2_channel_write(&spo2_ch[i]);
+        }
+    }
+    leak_polls = 0;
+    fifo_first_read = true;
+    spo2_restart();
+    ppg_set_led(agc.led); // phase 2/3 LED select, restarts the gain control and heart rate
+    return ok;
+}
+
+void ppg_set_spo2_currents(uint8_t red, uint8_t ir)
+{
+    spo2_ch[0].current = red ? red : SPO2_RED_CURRENT;
+    spo2_ch[1].current = ir ? ir : SPO2_IR_CURRENT;
+    if (mode == PPG_MODE_SPO2) {
+        for (int i = 0; i < 2; i++) {
+            spo2_ch[i].locked = false;
+            spo2_channel_write(&spo2_ch[i]);
+        }
+        spo2_restart();
+    }
+}
+
+void ppg_set_leak(uint16_t red, uint16_t ir)
+{
+    spo2_leak[0] = red;
+    spo2_leak[1] = ir;
+    leak_polls = 0;
+}
+
+void ppg_measure_leak(void)
+{
+    leak_polls = mode == PPG_MODE_SPO2 ? 1 : 0;
+}
+
+// Offset DAC control of a red/IR channel, every 200 ms: steps of the measured size
+// towards RAW_TARGET when out of RAW_LOW-RAW_HIGH, then locked until out of
+// RAW_RECAL_LOW-RAW_RECAL_HIGH for 0.5 s. The LED current changes only if the offset
+// DAC reaches its limits. Any change restarts the SpO2 window.
+static void spo2_channel_step(struct spo2_ch *c)
+{
+    int32_t raw = raw_phase[c->phase];
+    bool valid = raw > RAW_CLIP_LOW && raw < RAW_CLIP_HIGH;
+    if (c->before && valid) {
+        int32_t k = (c->before - raw) / c->step;
+        if (k > 100000 && k < 200000) {
+            idac_counts = (3 * idac_counts + k) / 4;
+        }
+    }
+    c->before = 0;
+
+    int delta;
+    if (raw >= RAW_CLIP_HIGH) {
+        delta = 3;
+    } else if (raw <= RAW_CLIP_LOW) {
+        delta = -2;
+    } else if (c->locked) {
+        if (raw < RAW_RECAL_LOW || raw > RAW_RECAL_HIGH) {
+            if (++c->out_count >= 5) {
+                c->locked = false;
+            }
+        } else {
+            c->out_count = 0;
+        }
+        return;
+    } else if (raw < RAW_LOW || raw > RAW_HIGH) {
+        int32_t d = raw - RAW_TARGET;
+        delta = (d + (d > 0 ? idac_counts / 2 : -idac_counts / 2)) / idac_counts;
+        if (!delta) {
+            delta = d > 0 ? 1 : -1;
+        }
+    } else {
+        c->locked = true;
+        c->out_count = 0;
+        return;
+    }
+    c->locked = false;
+    int idac = c->idac + delta;
+    if (idac < 0) {
+        idac = 0;
+        if (raw <= RAW_CLIP_LOW && c->current < 100) { // too little light
+            c->current *= 2;
+            hx3605_write_reg(c->cur_reg, c->current);
+        }
+    } else if (idac > 255) {
+        idac = 255;
+        if (c->current > 1) { // too much light
+            c->current /= 2;
+            hx3605_write_reg(c->cur_reg, c->current);
+        }
+    }
+    if (idac != c->idac) {
+        if (valid) {
+            c->before = raw;
+            c->step = (int8_t)(idac - c->idac);
+        }
+        c->idac = (uint8_t)idac;
+        hx3605_write_reg(c->idac_reg, c->idac);
+    }
+    spo2_restart();
+}
+
+// Light that went through the finger = mean raw + this: offset DAC (light removed)
+// - dark reading - optical leak
+static int32_t spo2_offset(int i)
+{
+    return spo2_ch[i].idac * idac_counts - dark_avg - (int32_t)spo2_leak[i] * 16 * spo2_ch[i].current;
+}
+
+// Leak measurement (ring off the finger, in the dark): light per current unit once
+// both channels are locked for LEAK_POLLS
+static void leak_step(void)
+{
+    if (!spo2_ch[0].locked || !spo2_ch[1].locked) {
+        leak_polls = 1;
+        return;
+    }
+    if (++leak_polls < LEAK_POLLS) {
+        return;
+    }
+    int32_t raw[2];
+    ppg_spo2_means(&raw[0], &raw[1]);
+    for (int i = 0; i < 2; i++) {
+        int32_t light = raw[i] + spo2_ch[i].idac * idac_counts - dark_avg;
+        spo2_leak[i] = light > 0 ? (uint16_t)(light / 16 / spo2_ch[i].current) : 0;
+    }
+    leak_polls = 0;
+}
+
 void ppg_stop(void)
 {
     write_table(stock_off, sizeof(stock_off) / sizeof(stock_off[0]));
@@ -345,33 +551,54 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
     }
     if (count >= HX3605_FIFO_DEPTH) {
         // FIFO full (samples lost): reset it, as the stock firmware (0x07FC85EA)
-        uint8_t ctrl = 0x83;
+        uint8_t ctrl = mode == PPG_MODE_SPO2 ? 0x80 : 0x83;
         hx3605_read_regs(HX3605_REG_FIFO_CTRL, &ctrl, 1);
         hx3605_write_reg(HX3605_REG_FIFO_CTRL, 0x00);
         delay_ms(5);
         hx3605_write_reg(HX3605_REG_FIFO_CTRL, ctrl);
         fifo_first_read = true;
     }
-    // LED channel samples (phase flag 1) -> sample rate, heart rate. While the hand
-    // moves, the samples are dropped: the pulse is lost in the motion artifacts, and
-    // they would spoil the heart rate for the next 8 s (its window)
+    // LED channel samples -> sample rate, heart rate; red/IR -> SpO2. Heart-rate mode:
+    // phase flag 1 = LED channel (green - dark). SpO2 mode: flag = phase (0 dark, 1 red,
+    // 2 green, 3 IR, in this order in each frame). While the hand moves, the samples
+    // are dropped: the pulse is lost in the motion artifacts, and they would spoil
+    // the results for the next 8 s (their window)
+    static int32_t last_dark, last_red;
     uint32_t led_samples = 0;
     bool settled = agc.state == PPG_AGC_LOCKED || agc.state == PPG_AGC_OFF;
     bool moving = motion_level > PPG_MOTION_MAX;
+    bool spo2_ready = mode == PPG_MODE_SPO2 && spo2_ch[0].locked && spo2_ch[1].locked;
     if (moving) {
         hr_restart();
+        spo2_restart();
     }
     for (int k = 0; k < n; k++) {
         const uint8_t *p = &packet[PPG_HEADER + 3 * k];
         uint32_t raw = p[0] | (p[1] << 8) | ((uint32_t)p[2] << 16);
-        if (((raw >> 21) & 3) != 1) {
-            continue;
-        }
-        led_samples++;
+        uint8_t flag = (raw >> 21) & 3;
         int32_t v = raw & 0x1FFFFF;
         if (v & 0x100000) {
             v -= 0x200000;
         }
+        if (mode == PPG_MODE_SPO2) {
+            if (flag == 0) {
+                last_dark = v;
+                dark_avg += (v - dark_avg) / 16;
+                continue;
+            } else if (flag == 1) {
+                last_red = v;
+                continue;
+            } else if (flag == 3) {
+                if (spo2_ready && !moving) {
+                    ppg_spo2_add(last_red, v);
+                }
+                continue;
+            }
+            v -= last_dark; // green
+        } else if (flag != 1) {
+            continue;
+        }
+        led_samples++;
         if (settled && !moving && agc.led != PPG_LED_OFF) {
             ppg_hr_add(v);
         }
@@ -380,11 +607,22 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
     if (++hr_polls >= 10) { // ~1 s
         hr_polls = 0;
         ppg_hr_update(fs_x100, &hr_bpm_x10, &hr_confidence);
+        if (spo2_ready) {
+            ppg_spo2_compute(fs_x100, spo2_offset(0), spo2_offset(1),
+                             &spo2_ratio_x1000, &spo2_corr, &spo2_x10);
+        }
     }
 
     read_phases();
     if (agc.enabled) {
         agc_step();
+        if (mode == PPG_MODE_SPO2 && (hr_polls & 1)) { // every 200 ms
+            spo2_channel_step(&spo2_ch[0]);
+            spo2_channel_step(&spo2_ch[1]);
+        }
+    }
+    if (leak_polls) {
+        leak_step();
     }
     packet[0] = seq++;
     packet[1] = n;
@@ -395,7 +633,7 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
     packet[6] = agc.state | (agc.led & 0xF0);
     for (int i = 0; i < 3; i++) {
         packet[7 + i] = raw_phase[2] >> (8 * i);
-        packet[10 + i] = raw_phase[3] >> (8 * i);
+        packet[10 + i] = raw_phase[AMB_PHASE] >> (8 * i);
     }
     packet[13] = hr_bpm_x10;
     packet[14] = hr_bpm_x10 >> 8;
@@ -403,5 +641,23 @@ uint8_t ppg_read(uint8_t packet[PPG_PACKET_MAX])
     packet[16] = fs_x100;
     packet[17] = fs_x100 >> 8;
     packet[18] = motion_level;
+    bool spo2 = mode == PPG_MODE_SPO2;
+    packet[19] = mode | (spo2 && spo2_ch[0].locked ? 0x10 : 0) | (spo2 && spo2_ch[1].locked ? 0x20 : 0)
+                 | (leak_polls ? 0x80 : 0);
+    packet[20] = spo2_ch[0].current;
+    packet[21] = spo2_ch[0].idac;
+    packet[22] = spo2_ch[1].current;
+    packet[23] = spo2_ch[1].idac;
+    packet[24] = spo2_x10;
+    packet[25] = spo2_x10 >> 8;
+    packet[26] = spo2_corr;
+    packet[27] = spo2_ratio_x1000;
+    packet[28] = spo2_ratio_x1000 >> 8;
+    packet[29] = spo2_leak[0];
+    packet[30] = spo2_leak[0] >> 8;
+    packet[31] = spo2_leak[1];
+    packet[32] = spo2_leak[1] >> 8;
+    packet[33] = idac_counts / 16;
+    packet[34] = (idac_counts / 16) >> 8;
     return PPG_HEADER + 3 * n;
 }

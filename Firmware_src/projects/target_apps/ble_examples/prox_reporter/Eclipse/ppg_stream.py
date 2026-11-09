@@ -20,7 +20,7 @@ import time
 from bleak import BleakClient, BleakScanner
 
 PPG_CHAR = "e7da0718-b8b6-44b6-912c-e0bfb05d562d"
-HEADER = 19  # ppg_read() in src/ppg/hx3605.h
+HEADER = 35  # PPG_HEADER, ppg_read() in src/ppg/hx3605.h
 FS = 25.0  # Hz (ppg_start())
 
 

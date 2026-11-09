@@ -48,7 +48,7 @@
   .trace-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 13px; }
   .trace-head b { color: var(--text); font-weight: 600; }
   canvas { width: 100%; display: block; }
-  #cpulse { height: 220px; } #craw { height: 110px; } #cother { height: 80px; }
+  #cpulse { height: 220px; } #craw { height: 110px; } #cother { height: 80px; } #cspo2 { height: 160px; }
   .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
   .meter { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; width: 160px; }
   .meter > div { height: 100%; background: var(--led); width: 0; transition: width .3s; }
@@ -110,7 +110,7 @@
         <div class="trace-head" style="margin-top: 10px"><span><b>LED channel</b> raw</span>
           <span style="display:flex; gap:8px; align-items:center">level <span class="meter"><div id="level"></div></span><span id="rawinfo"></span></span></div>
         <canvas id="craw"></canvas>
-        <div class="trace-head" style="margin-top: 10px"><span><b>Other phase</b> (ambient / low IR)</span><span id="otherinfo"></span></div>
+        <div class="trace-head" style="margin-top: 10px"><span><b>Other phase</b> (dark / low IR)</span><span id="otherinfo"></span></div>
         <canvas id="cother"></canvas>
       </div>
       <div class="bpm">
@@ -121,6 +121,32 @@
       </div>
     </div>
     <p class="hint" id="rate"></p>
+  </div>
+
+  <div class="panel" id="spo2panel">
+    <div class="row" style="justify-content: space-between">
+      <label class="inline"><input type="checkbox" id="spo2on"> <b style="color: var(--text)">Measure SpO2</b> (red + IR, experimental)</label>
+      <span class="row" style="gap: 8px">
+        <span class="hint" style="margin:0">Once per ring: take it off, put it in the dark (closed box), then</span>
+        <button id="leakcal" disabled>Calibrate light leak</button>
+      </span>
+    </div>
+    <div class="live">
+      <div>
+        <div class="trace-head"><span><b>Red</b> and <b>IR</b> pulses (each scaled to fit)</span><span id="spo2corr"></span></div>
+        <canvas id="cspo2"></canvas>
+      </div>
+      <div class="bpm">
+        <div class="value" id="spo2">--</div>
+        <div class="unit">% SpO2</div>
+        <div class="conf" id="spo2info">Off</div>
+      </div>
+    </div>
+    <p class="hint" id="spo2detail"></p>
+    <p class="hint">Not calibrated, not a medical measurement: ratio of the red and IR pulses (each divided by
+      the light that went through the finger) with the textbook curve 110 &minus; 25&nbsp;R. Most of the light
+      reaching the sensor leaks inside the ring: the leak calibration measures it (kept in this browser, per
+      ring). The ring shows a value only when the red and IR pulses match (correlation &ge; 90&nbsp;%).</p>
   </div>
 
   <div class="panel">
@@ -167,7 +193,8 @@ const FULL = 257700;           // LED channel ceiling (saturation)
 const LEDS = {green: 0x10, red: 0x40, ir: 0x20};
 const REG_LED_CUR = 0x28, REG_ON_TIME = 0x1e;
 const CMD_AGC = 0xfc, CMD_LED = 0xfb;  // [0xFC, on], [0xFB, LED select]
-const HEADER = 19;                      // ppg_read() in src/ppg/hx3605.h
+const CMD_MODE = 0xfa, CMD_LEAK = 0xf9, CMD_LEAK_MEASURE = 0xf8; // [0xFA, 0 HR / 1 SpO2], [0xF9, red, IR (u16)], [0xF8]
+const HEADER = 35;                      // PPG_HEADER, ppg_read() in src/ppg/hx3605.h
 const AGC_STATES = ['manual', 'starting', 'setting current', 'setting offset', 'locked'];
 
 const REGS = [
@@ -183,7 +210,9 @@ const REGS = [
 const $ = id => document.getElementById(id);
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 let device = null, ppg = null, busy = Promise.resolve();
-const traces = [[], []];       // [other phase, LED channel]
+const traces = [[], []];       // [other phase (SpO2 mode: dark), LED channel (green - dark)]
+const redT = [], irT = [];     // SpO2 mode: raw red and IR
+let lastDark = 0, leakCal = null;
 let sampleCount = 0, rateT0 = 0;
 let led = 'green', current = 2, agcState = null;
 
@@ -216,20 +245,30 @@ function onPacket(event) {
   // register read results also come here (readValue fires this event)
   if (d.length < HEADER || d.length !== HEADER + 3 * d[1]) return;
   const u24 = i => d[i] | (d[i + 1] << 8) | (d[i + 2] << 16);
+  const u16 = i => d[i] | (d[i + 1] << 8);
   agcState = {current: d[3], ledDac: d[4], ambDac: d[5], state: d[6] & 15, led: d[6] >> 4,
-              rawLed: u24(7), rawAmb: u24(10), bpm: (d[13] | (d[14] << 8)) / 10, conf: d[15],
-              fs: (d[16] | (d[17] << 8)) / 100, motion: d[18]};
+              rawLed: u24(7), rawAmb: u24(10), bpm: u16(13) / 10, conf: d[15],
+              fs: u16(16) / 100, motion: d[18],
+              mode: d[19] & 15, redLock: !!(d[19] & 0x10), irLock: !!(d[19] & 0x20), leakRunning: !!(d[19] & 0x80),
+              red: [d[20], d[21]], ir: [d[22], d[23]], spo2: u16(24) / 10, corr: d[26], ratio: u16(27) / 1000,
+              leak: [u16(29), u16(31)], dacCounts: u16(33) * 16};
+  const push = (t, v) => { t.push(v); if (t.length > WINDOW) t.shift(); };
   for (let k = 0; k < d[1]; k++) {
     const raw = u24(HEADER + 3 * k);
     let v = raw & 0x1fffff;
     if (v & 0x100000) v -= 0x200000;
     const flag = (raw >> 21) & 3;
-    if (flag > 1) continue;
-    const t = traces[flag];
-    t.push(v);
-    if (t.length > WINDOW) t.shift();
-    sampleCount++;
+    if (agcState.mode === 1) {  // SpO2 mode: flag = phase, 0 dark, 1 red, 2 green, 3 IR
+      if (flag === 0) { lastDark = v; push(traces[0], v); }
+      else if (flag === 1) push(redT, v);
+      else if (flag === 3) push(irT, v);
+      else { push(traces[1], v - lastDark); sampleCount++; }
+    } else if (flag <= 1) {      // heart-rate mode: flag 1 = LED channel (green - dark)
+      push(traces[flag], v);
+      if (flag === 1) sampleCount++;
+    }
   }
+  if (leakCal) leakStep();
 }
 
 // ---- signal processing ----
@@ -276,9 +315,11 @@ function draw(canvas, data, color, opts = {}) {
   if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-  ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
-  for (let s = 1; s < 10; s++) { const x = Math.round(w * s / 10) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  if (!opts.overlay) {  // overlay: draw over the previous trace (own scale)
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
+    for (let s = 1; s < 10; s++) { const x = Math.round(w * s / 10) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  }
   if (data.length < 2) return;
   let min = Math.min(...data), max = Math.max(...data);
   if (max === min) { max += 1; min -= 1; }
@@ -353,15 +394,84 @@ function render() {
     if (a.state && current !== a.current) { current = a.current; showLed(); }
   }
   if (other.length) $('otherinfo').textContent = `${other[other.length - 1]}`;
+  renderSpo2();
 
   const now = performance.now();
   if (ppg && now - rateT0 > 2000) {
-    $('rate').textContent = `${(sampleCount / ((now - rateT0) / 1000) / 2).toFixed(1)} samples/s per channel`;
+    $('rate').textContent = `${(sampleCount / ((now - rateT0) / 1000)).toFixed(1)} samples/s per channel`;
     sampleCount = 0; rateT0 = now;
   }
   requestAnimationFrame(render);
 }
 
+
+function renderSpo2() {
+  const a = agcState;
+  if (!a || a.mode !== 1) {
+    $('spo2').textContent = '--';
+    $('spo2info').textContent = $('spo2on').checked && ppg ? 'Starting…' : 'Off';
+    $('spo2detail').textContent = ''; $('spo2corr').textContent = '';
+    draw($('cspo2'), [], css('--red'));
+    return;
+  }
+  const span = WINDOW - Math.round(1.5 * FS);
+  draw($('cspo2'), pulseOf(redT), css('--red'), {span, width: 1.8});
+  draw($('cspo2'), pulseOf(irT), css('--ir'), {span, width: 1.8, overlay: true});
+  $('spo2corr').textContent = a.ratio ? `correlation ${a.corr} %` : '';
+  const noLeak = !a.leak[0] && !a.leak[1];
+  let info;
+  if (a.leakRunning || leakCal) info = 'Measuring the light leak: keep the ring off the finger, in the dark…';
+  else if (!a.redLock || !a.irLock) info = 'Adjusting red / IR…';
+  else if (a.motion > 25) info = 'Moving: keep the hand still';
+  else if (!a.ratio) info = 'Measuring…';
+  else if (!a.spo2) info = `Red and IR pulses don't match (${a.corr} %): keep still, ring snug`;
+  else info = `uncalibrated estimate${noLeak ? ', leak not calibrated' : ''}`;
+  $('spo2').textContent = a.spo2 && !a.leakRunning ? Math.round(a.spo2) : '--';
+  $('spo2info').textContent = info;
+  $('spo2detail').textContent = `R ${a.ratio.toFixed(3)} · red current ${a.red[0]} offset ${a.red[1]} · ` +
+    `IR current ${a.ir[0]} offset ${a.ir[1]} · ${a.dacCounts} counts per offset step · ` +
+    `leak red ${a.leak[0] * 16} IR ${a.leak[1] * 16} counts per current unit${noLeak ? ' (not calibrated)' : ''}`;
+}
+
+// ---- SpO2 mode and leak calibration (kept per ring name in this browser) ----
+const leakKey = () => `libring-leak-${device ? device.name : ''}`;
+function loadLeak() { try { return JSON.parse(localStorage.getItem(leakKey())); } catch (e) { return null; } }
+function saveLeak(l) { try { localStorage.setItem(leakKey(), JSON.stringify(l)); } catch (e) { /* private mode */ } }
+async function sendLeak() {
+  const l = loadLeak();
+  if (!l || !ppg) return;
+  await gatt(() => ppg.writeValueWithResponse(new Uint8Array([CMD_LEAK, l.red & 255, l.red >> 8, l.ir & 255, l.ir >> 8])));
+  log(`light leak sent: red ${l.red * 16}, IR ${l.ir * 16} counts per current unit`);
+}
+async function setSpo2(on) {
+  if (!ppg) return;
+  traces[0].length = traces[1].length = redT.length = irT.length = 0;
+  await command(CMD_MODE, on ? 1 : 0);  // restarts the ring's gain control
+  if (on) await sendLeak();
+  log(`SpO2 mode ${on ? 'on' : 'off'}`);
+}
+async function startLeakCal() {
+  if (!ppg) return;
+  if (!$('spo2on').checked) { $('spo2on').checked = true; await setSpo2(true); }
+  await gatt(() => ppg.writeValueWithResponse(new Uint8Array([CMD_LEAK_MEASURE])));
+  leakCal = {t0: performance.now(), seen: false};
+  $('leakcal').disabled = true;
+  log('measuring the light leak (ring off the finger, in the dark)');
+}
+function leakStep() {
+  const a = agcState;
+  if (a.leakRunning) { leakCal.seen = true; return; }
+  if (leakCal.seen && (a.leak[0] || a.leak[1])) {
+    saveLeak({red: a.leak[0], ir: a.leak[1]});
+    log(`light leak measured and saved for ${device.name}: red ${a.leak[0] * 16}, IR ${a.leak[1] * 16} counts per current unit`);
+  } else if (performance.now() - leakCal.t0 < 20000) {
+    return;
+  } else {
+    log('light leak measurement failed (is the ring in SpO2 mode, off the finger?)');
+  }
+  leakCal = null;
+  $('leakcal').disabled = !ppg;
+}
 
 // ---- LED control ----
 function showLed() {
@@ -431,6 +541,7 @@ async function startSensor() {
   await command(CMD_AGC, $('auto').checked ? 1 : 0);
   if (!$('auto').checked) await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
   await setLed(led);
+  if ($('spo2on').checked) await setSpo2(true);  // each start is in heart-rate mode
 }
 async function restart() {
   await gatt(() => ppg.stopNotifications());
@@ -439,7 +550,7 @@ async function restart() {
   log('sensor restarted');
 }
 function setConnected(on) {
-  for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep']) $(id).disabled = !on;
+  for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep', 'leakcal']) $(id).disabled = !on;
   $('connect').disabled = on;
 }
 async function connect() {
@@ -453,7 +564,7 @@ async function connect() {
     const server = await device.gatt.connect();
     const service = await server.getPrimaryService(SERVICE);
     try { ppg = await service.getCharacteristic(PPG); }
-    catch (e) { throw new Error('this ring has no PPG characteristic: flash the ppg branch firmware'); }
+    catch (e) { throw new Error('this ring has no PPG characteristic: flash the latest firmware'); }
     ppg.addEventListener('characteristicvaluechanged', onPacket);
     await startSensor();
     setConnected(true);
@@ -510,6 +621,8 @@ $('read').onclick = async () => {
   try { log(`read 0x${hex(r)}..: ${(await readRegs(r, n)).map(hex).join(' ')}`); } catch (e) { log(`read failed: ${e.message}`); }
 };
 $('sweep').onclick = sweep;
+$('spo2on').onchange = () => setSpo2($('spo2on').checked).catch(e => log(e.message));
+$('leakcal').onclick = () => startLeakCal().catch(e => log(e.message));
 buildRegs();
 showLed();
 if (!navigator.bluetooth) status('Web Bluetooth not available: use Chrome or Edge', 'err');

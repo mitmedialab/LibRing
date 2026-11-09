@@ -32,8 +32,28 @@ bool hx3605_write_reg(uint8_t reg, uint8_t value);
 #define HX3605_FIFO_DEPTH     64
 
 // Wakes the chip, checks its ID (0x27), starts the stock heart-rate setup and the
-// automatic gain control with the green LED. Returns false if the chip doesn't answer.
+// automatic gain control with the green LED (heart-rate mode). Returns false if the
+// chip doesn't answer.
 bool ppg_start(void);
+
+// Heart-rate mode: green LED on phase 2, phase 3 dark, FIFO with green - dark.
+// SpO2 mode: phase 0 dark, 1 red, 2 green (heart rate), 3 IR, FIFO with the 4 raw
+// phases; red/IR offset DACs controlled by the ring; SpO2 computed (ppg_spo2.c).
+#define PPG_MODE_HR   0
+#define PPG_MODE_SPO2 1
+bool ppg_set_mode(uint8_t mode);
+
+// SpO2 mode: red and IR LED currents (0: default, 8 and 24)
+void ppg_set_spo2_currents(uint8_t red, uint8_t ir);
+
+// SpO2 mode: optical leak of the red and IR LEDs (light reaching the photodiode
+// without going through the finger), in 16 raw counts per LED current unit, as
+// measured by ppg_measure_leak() (kept by the client: lost when the ring restarts)
+void ppg_set_leak(uint16_t red, uint16_t ir);
+
+// SpO2 mode: measure the optical leak, with the ring OFF the finger, in the dark
+// (~4 s; packet byte 19 bit 7 while running, result in bytes 29-32)
+void ppg_measure_leak(void);
 
 // LED of phase 2 (the FIFO LED channel): PPG_LED_GREEN/IR/RED (LED driver select,
 // register 0x2b bits 7:4), or PPG_LED_OFF. Restarts the automatic gain control.
@@ -57,23 +77,34 @@ void ppg_set_motion(uint8_t level);
 // Stock "off" setup: sampling off, chip asleep
 void ppg_stop(void);
 
-// Notification packet, read every ~100 ms (25 Hz: ~2-3 samples per phase):
+// Notification packet, read every ~100 ms (24.2 Hz: ~2-3 samples per phase):
 //   [0]      sequence number (wraps)
 //   [1]      n, number of FIFO samples in this packet
 //   [2]      FIFO count register before reading
 //   [3]      LED current (0x28)       [4] LED offset DAC (0x2e)
-//   [5]      ambient offset DAC (0x2f)
+//   [5]      ambient offset DAC (0x2f, SpO2 mode: 0x2c)
 //   [6]      bits 3:0 AGC state (enum ppg_agc_state), bits 7:4 LED (PPG_LED_* >> 4)
 //   [7..9]   raw LED reading (phase 2, registers 0x08-0x0a), unsigned, little endian
-//   [10..12] raw ambient reading (phase 3, registers 0x0b-0x0d)
+//   [10..12] raw ambient reading (phase 3, registers 0x0b-0x0d; SpO2 mode: phase 0)
 //   [13..14] heart rate in 1/10 bpm, computed on the ring; 0: no clear pulse, moving,
 //            or not enough data yet (5 s), see ppg_hr_update()
 //   [15]     heart rate confidence 0-100 (>= 50: clear pulse; 0: not enough data)
 //   [16..17] measured sample rate per channel in 1/100 Hz
 //   [18]     motion level (accelerometer, 8 mg units, see ppg_set_motion())
-//   [19..]   n FIFO samples (register 0x41), 3 bytes each, raw, little endian
-//            (bits 20:0 signed value, bits 22:21 phase flag: 1 = LED channel)
-#define PPG_HEADER      19
+//   [19]     bits 3:0 mode (PPG_MODE_*), bit 4/5 red/IR offset locked, bit 7 leak
+//            measurement running
+//   [20] red current (0x27)  [21] red offset DAC (0x2d)
+//   [22] IR current (0x29)   [23] IR offset DAC (0x2f)
+//   [24..25] SpO2 in 1/10 % (0: no reliable value, see ppg_spo2.h)
+//   [26]     red/IR pulse correlation x100 (SpO2 reported from PPG_SPO2_CORR_MIN)
+//   [27..28] ratio R x1000 (0: not enough data)
+//   [29..30] red optical leak, [31..32] IR (see ppg_set_leak(); 0: not calibrated)
+//   [33..34] raw counts per offset DAC step / 16 (measured)
+//   [35..]   n FIFO samples (register 0x41), 3 bytes each, raw, little endian
+//            (bits 20:0 signed value, bits 22:21 phase flag: heart-rate mode 1 =
+//            LED channel = green - dark; SpO2 mode: the phase, 0 dark, 1 red, 2 green,
+//            3 IR)
+#define PPG_HEADER      35
 #define PPG_MAX_SAMPLES 16
 #define PPG_PACKET_MAX  (PPG_HEADER + 3 * PPG_MAX_SAMPLES)
 

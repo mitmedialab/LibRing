@@ -416,7 +416,14 @@ void user_ppg_streaming(bool enable) {
 //                       [0xFE, reg, n, values...] and notifications pause for 1 s
 //   [0xFC, enable]      automatic gain control on (1) / off (0)
 //   [0xFB, led]         LED of the LED channel: 0x10 green, 0x20 IR, 0x40 red, 0 off
-// Needs the I2C controller (set up 5 s after boot or by a subscription).
+//   [0xFA, mode]        0 heart rate, 1 SpO2 (PPG_MODE_*; back to 0 at each start)
+//   [0xF9, red (2 bytes), IR (2 bytes)]  SpO2 optical leak, little endian
+//                       (ppg_set_leak(): the client keeps it, e.g. per ring name)
+//   [0xF8]              measure the SpO2 optical leak (ring off the finger, in the dark)
+//   [0xF7, red, IR]     SpO2 LED currents (0: default)
+// These command bytes are also trim registers (0xF0-0xFB) of the sensor: they can't
+// be written with [reg, value]. Needs the I2C controller (set up 5 s after boot or
+// by a subscription).
 void user_ppg_config(const uint8_t *value, uint16_t len) {
     if (suota_active || !has_timer_started) {
         return;
@@ -425,6 +432,14 @@ void user_ppg_config(const uint8_t *value, uint16_t len) {
         ppg_agc_enable(value[1]);
     } else if (len == 2 && value[0] == 0xFB) {
         ppg_set_led(value[1]);
+    } else if (len == 2 && value[0] == 0xFA) {
+        ppg_set_mode(value[1]);
+    } else if (len == 5 && value[0] == 0xF9) {
+        ppg_set_leak(value[1] | (value[2] << 8), value[3] | (value[4] << 8));
+    } else if (len == 1 && value[0] == 0xF8) {
+        ppg_measure_leak();
+    } else if (len == 3 && value[0] == 0xF7) {
+        ppg_set_spo2_currents(value[1], value[2]);
     } else if (len == 2) {
         hx3605_write_reg(value[0], value[1]);
     } else if (len == 3 && value[0] == 0xFE && value[2] <= 16) {
