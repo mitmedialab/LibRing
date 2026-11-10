@@ -86,6 +86,15 @@
     <button id="connect" class="primary">Connect</button>
     <button id="disconnect" disabled>Disconnect</button>
     <span id="status">Not connected</span>
+    <span class="row" style="gap: 6px; margin-left: auto">
+      <button id="rec" title="Records everything the ring sends, the settings and your labels, for analysis">Record</button>
+      <span class="hint" style="margin:0">last 10 s:</span>
+      <button id="lgood" disabled title="The last 10 s on screen look good (key G)">Good (G)</button>
+      <button id="lmedium" disabled title="The last 10 s on screen look medium (key M)">Medium (M)</button>
+      <button id="lbad" disabled title="The last 10 s on screen look bad / noisy (key B)">Bad (B)</button>
+      <button id="recsave" disabled>Download</button>
+      <span id="recinfo" class="hint" style="margin:0"></span>
+    </span>
   </header>
 
   <div class="panel">
@@ -184,6 +193,7 @@
       </div>
     </div>
     <p class="hint" id="spo2detail"></p>
+    <p class="hint" id="spo2spec"></p>
     <p class="hint">Not calibrated, not a medical measurement: ratio of the red and IR pulses (each divided by
       the light that went through the finger) with the textbook curve 110 &minus; 25&nbsp;R. Most of the light
       reaching the sensor leaks inside the ring: the leak calibration measures it (kept in this browser, per
@@ -273,8 +283,10 @@ const trend = [];              // one point per second: {hr, rmssd, spo2} (NaN: 
 const TREND_MAX = 600;         // 10 min
 let sampleCount = 0, rateT0 = 0;
 let led = 'green', current = 2, agcState = null;
+let recording = null;           // see Recorder
 
 function log(msg) {
+  if (recording && !recording.done) recording.log.push([performance.now() - recording.t0, msg]);
   const el = $('log');
   el.textContent += `${new Date().toLocaleTimeString()}  ${msg}\n`;
   el.scrollTop = el.scrollHeight;
@@ -300,6 +312,7 @@ async function readRegs(reg, n) {
 
 function onPacket(event) {
   const d = new Uint8Array(event.target.value.buffer);
+  if (recording && !recording.done) recording.packets.push([Math.round(performance.now() - recording.t0), hexBytes(d)]);
   // register read results also come here (readValue fires this event)
   if (d.length < HEADER || d.length !== HEADER + 3 * d[1]) return;
   const u24 = i => d[i] | (d[i + 1] << 8) | (d[i + 2] << 16);
@@ -317,9 +330,9 @@ function onPacket(event) {
     if (v & 0x100000) v -= 0x200000;
     const flag = (raw >> 21) & 3;
     if (agcState.mode === 1) {  // SpO2 mode: flag = phase, 0 dark, 1 red, 2 green, 3 IR
-      if (flag === 0) { lastDark = v; push(traces[0], v); }
-      else if (flag === 1) push(redT, v);
-      else if (flag === 3) push(irT, v);
+      if (flag === 0) { lastDark = v; push(traces[0], v); pushSpec(spec.dark, v); }
+      else if (flag === 1) { push(redT, v); pushSpec(spec.red, v); }
+      else if (flag === 3) { push(irT, v); pushSpec(spec.ir, v); }
       else { push(traces[1], v - lastDark); sampleCount++; ledCount++; }
     } else if (flag <= 1) {      // heart-rate mode: flag 1 = LED channel (green - dark)
       push(traces[flag], v);
@@ -657,6 +670,7 @@ async function sendLeak() {
 async function setSpo2(on) {
   if (!ppg) return;
   traces[0].length = traces[1].length = redT.length = irT.length = 0;
+  spec.red.length = spec.ir.length = spec.dark.length = 0;
   hrv.prev = null;
   await command(CMD_MODE, on ? 1 : 0);  // restarts the ring's gain control
   if (on) { await sendLeak(); await sendSpo2Currents(); await sendSpo2Pulses(false); await keepSpo2Ir(); }
@@ -907,7 +921,114 @@ showSpo2Currents();
 $('spo2on').onchange = () => setSpo2($('spo2on').checked).catch(e => log(e.message));
 $('leakcal').onclick = () => startLeakCal().catch(e => log(e.message));
 $('trendclear').onclick = () => { trend.length = 0; hrv.ibis.length = 0; hrv.prev = null; };
-setInterval(() => { updateHrv(); if (ppg) updateTrend(); }, 1000);
+// ---- Recorder (raw packets, settings, labels) ----
+const hexBytes = a => Array.from(a, hex).join('');
+function settings() {
+  return {led, auto: $('auto').checked, current: $('current').value, ontime: $('ontime').value,
+          spo2: $('spo2on').checked, redcur: $('redcur').value, ircur: $('ircur').value,
+          redpulse: $('redpulse').value, irpulse: $('irpulse').value, ring: device ? device.name : null};
+}
+// A label judges the whole window on screen: [from, to] in ms since the start of the recording
+const LABEL_WINDOW_MS = WINDOW / FS * 1000;
+function label(kind) {
+  if (!recording || recording.done) return;
+  const t = Math.round(performance.now() - recording.t0);
+  recording.labels.push({from: Math.max(0, t - LABEL_WINDOW_MS), to: t, label: kind, settings: settings()});
+  const n = k => recording.labels.filter(l => l.label === k).length;
+  $('recinfo').textContent = `last: ${kind} · good ${n('good')}, medium ${n('medium')}, bad ${n('bad')}`;
+}
+function toggleRecording() {
+  if (!recording) {
+    recording = {t0: performance.now(), start: new Date().toISOString(), packets: [], labels: [], log: [], settings: settings()};
+    $('rec').textContent = 'Stop';
+    $('recinfo').textContent = 'recording…';
+  } else {
+    recording.stop = new Date().toISOString();
+    recording.done = true;
+    $('rec').textContent = 'Record';
+    $('recinfo').textContent = `${recording.packets.length} packets, ${recording.labels.length} labels`;
+  }
+  const on = recording && !recording.done;
+  $('lgood').disabled = $('lmedium').disabled = $('lbad').disabled = !on;
+  $('recsave').disabled = !recording;
+}
+$('rec').onclick = () => { if (recording && recording.done) recording = null; toggleRecording(); };
+$('lgood').onclick = () => label('good');
+$('lmedium').onclick = () => label('medium');
+$('lbad').onclick = () => label('bad');
+document.addEventListener('keydown', e => {
+  if (!recording || recording.done || e.target.tagName === 'INPUT') return;
+  const k = {g: 'good', m: 'medium', b: 'bad'}[e.key.toLowerCase()];
+  if (k) label(k);
+});
+$('recsave').onclick = () => {
+  const blob = new Blob([JSON.stringify(recording)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ppg_${(device ? device.name : 'ring')}_${recording.start.replace(/[:.]/g, '-')}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+// ---- Spectral SpO2 (web app): red and IR amplitude at the heart rate over the last 20 s ----
+// The pulse is a narrow peak in the spectrum, the noise spreads over all frequencies: the
+// amplitude at the peak is much less sensitive to noise than the waveform.
+const SPEC_S = 20;
+const spec = {red: [], ir: [], dark: []};
+function pushSpec(t, v) { t.push(v); if (t.length > SPEC_S * FS) t.shift(); }
+function spectrum(x, fs) {
+  const n = x.length, t0 = (n - 1) / 2;
+  let sx = 0, sxt = 0, stt = 0;
+  for (let i = 0; i < n; i++) { sx += x[i]; sxt += x[i] * (i - t0); stt += (i - t0) ** 2; }
+  const m = sx / n, b = sxt / stt;
+  const y = x.map((v, i) => (v - m - b * (i - t0)) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1))));
+  const f = [], p = [];
+  for (let fr = 0.7; fr <= 3.5; fr += 0.02) {
+    let re = 0, im = 0;
+    const w = 2 * Math.PI * fr / fs;
+    for (let i = 0; i < n; i++) { re += y[i] * Math.cos(w * i); im -= y[i] * Math.sin(w * i); }
+    f.push(fr); p.push(re * re + im * im);
+  }
+  return {f, p};
+}
+function spectralSpo2() {
+  const a = agcState;
+  if (!a || a.mode !== 1 || !a.redLock || !a.irLock) return {msg: 'waiting for SpO2 mode (red / IR settled)'};
+  const n = Math.min(spec.red.length, spec.ir.length);
+  if (n < 12 * FS) return {msg: `collecting (${Math.round(n / FS)} / ${SPEC_S} s)`};
+  const fs = a.fs || FS;
+  const r = spectrum(spec.red.slice(-n), fs), i = spectrum(spec.ir.slice(-n), fs);
+  const med = q => [...q].sort((u, v) => u - v)[q.length >> 1] || 1;
+  const mr = med(r.p), mi = med(i.p);
+  let k = 0;
+  for (let j = 1; j < r.p.length; j++) if (r.p[j] / mr + i.p[j] / mi > r.p[k] / mr + i.p[k] / mi) k = j;
+  const amp = q => Math.sqrt(q.slice(Math.max(0, k - 5), k + 6).reduce((s, v) => s + v, 0)); // +-0.1 Hz
+  const qr = Math.sqrt(r.p[k] / mr), qi = Math.sqrt(i.p[k] / mi);  // peak / typical, amplitude
+  const dark = spec.dark.length ? spec.dark.reduce((s, v) => s + v, 0) / spec.dark.length : 0;
+  const mean = q => q.slice(-n).reduce((s, v) => s + v, 0) / n;
+  const dcR = mean(spec.red) + a.red[1] * a.dacCounts - dark - a.leak[0] * 16 * a.red[0];
+  const dcI = mean(spec.ir) + a.ir[1] * a.dacCounts - dark - a.leak[1] * 16 * a.ir[0];
+  const res = {hr: r.f[k] * 60, qr, qi};
+  if (dcR <= 0 || dcI <= 0) return {...res, msg: 'less light than the calibrated leak: leak calibration not valid for this ring'};
+  res.R = (amp(r.p) / dcR) / (amp(i.p) / dcI);
+  res.spo2 = 110 - 25 * res.R;
+  res.ok = qr >= SPEC_Q_MIN && qi >= SPEC_Q_MIN;
+  return res;
+}
+const SPEC_Q_MIN = 3;  // pulse peak at least 3x the typical spectrum amplitude, red and IR
+function showSpectral() {
+  if (!$('spo2on').checked || !ppg) { $('spo2spec').textContent = ''; return; }
+  const s = spectralSpo2();
+  let txt = 'Spectral estimate (web app, last 20 s): ';
+  if (s.spo2 !== undefined) {
+    txt += s.ok ? `${Math.round(s.spo2)} %` : '--';
+    txt += ` · R ${s.R.toFixed(2)} · pulse ${Math.round(s.hr)} bpm · peak quality red ${s.qr.toFixed(1)}, IR ${s.qi.toFixed(1)}` +
+           (s.ok ? '' : ` (needs ${SPEC_Q_MIN})`);
+  } else txt += s.msg + (s.hr ? ` · pulse ${Math.round(s.hr)} bpm` : '');
+  $('spo2spec').textContent = txt;
+}
+
+setInterval(() => { updateHrv(); if (ppg) updateTrend(); showSpectral(); }, 1000);
 buildRegs();
 showLed();
 if (!navigator.bluetooth) status('Web Bluetooth not available: use Chrome or Edge', 'err');
