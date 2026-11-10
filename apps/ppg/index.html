@@ -164,6 +164,14 @@
         <button id="leakcal" disabled>Calibrate light leak</button>
       </span>
     </div>
+    <div class="row" style="margin-top: 6px">
+      <label class="inline"><b style="color: var(--red)">Red</b> brightness <input type="range" id="redcur" min="1" max="255" value="8">
+        <span id="redcurv" style="width: 96px; color: var(--text)">8</span></label>
+      <label class="inline">pulse <select id="redpulse"><option value="16">32 µs</option><option value="32">64 µs</option><option value="64" selected>128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option></select></label>
+      <label class="inline"><b style="color: var(--ir)">IR</b> brightness <input type="range" id="ircur" min="1" max="255" value="24">
+        <span id="ircurv" style="width: 96px; color: var(--text)">24</span></label>
+      <label class="inline">pulse <select id="irpulse"><option value="16">32 µs</option><option value="32">64 µs</option><option value="64" selected>128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option></select></label>
+    </div>
     <div class="live">
       <div>
         <div class="trace-head"><span><b>Red</b> and <b>IR</b> pulses (each scaled to fit)</span><span id="spo2corr"></span></div>
@@ -630,8 +638,9 @@ function renderSpo2() {
   else info = `uncalibrated estimate${noLeak ? ', leak not calibrated' : ''}`;
   $('spo2').textContent = a.spo2 && !a.leakRunning ? Math.round(a.spo2) : '--';
   $('spo2info').textContent = info;
-  $('spo2detail').textContent = `R ${a.ratio.toFixed(3)} · red current ${a.red[0]} offset ${a.red[1]} · ` +
-    `IR current ${a.ir[0]} offset ${a.ir[1]} · ${a.dacCounts} counts per offset step · ` +
+  const led = (c, pulse) => `${c} (${mA(c)} mA), ${2 * pulse} µs pulses`;
+  $('spo2detail').textContent = `R ${a.ratio.toFixed(3)} · red ${led(a.red[0], spo2Pulse.red)}, offset ${a.red[1]} · ` +
+    `IR ${led(a.ir[0], spo2Pulse.ir)}, offset ${a.ir[1]} · ${a.dacCounts} counts per offset step · ` +
     `leak red ${a.leak[0] * 16} IR ${a.leak[1] * 16} counts per current unit${noLeak ? ' (not calibrated)' : ''}`;
 }
 
@@ -652,6 +661,26 @@ async function setSpo2(on) {
   await command(CMD_MODE, on ? 1 : 0);  // restarts the ring's gain control
   if (on) await sendLeak();
   log(`SpO2 mode ${on ? 'on' : 'off'}`);
+}
+// Red / IR brightness ([0xF7, red, IR]; the ring halves or doubles it when its offset DAC runs out)
+// and pulse length (on-time of phase 1 = red 0x1d, phase 3 = IR 0x1f; SpO2 mode starts at 128 us)
+const REG_PULSE = {red: 0x1d, ir: 0x1f};
+const spo2Pulse = {red: 64, ir: 64};
+const mA = c => (c * 200 / 255).toFixed(1);
+function showSpo2Currents() {
+  for (const ch of ['red', 'ir']) $(ch + 'curv').textContent = `${$(ch + 'cur').value} (${mA($(ch + 'cur').value)} mA)`;
+}
+async function sendSpo2Currents() {
+  if (!ppg || !$('spo2on').checked) return;
+  await gatt(() => ppg.writeValueWithResponse(new Uint8Array([0xf7, +$('redcur').value, +$('ircur').value])));
+}
+async function sendSpo2Pulses(changed) {
+  if (!ppg || !$('spo2on').checked) return;
+  for (const ch of ['red', 'ir']) {
+    spo2Pulse[ch] = parseInt($(ch + 'pulse').value, 10);
+    if (spo2Pulse[ch] !== 64 || changed) await writeReg(REG_PULSE[ch], spo2Pulse[ch]);
+  }
+  if (changed) log(`SpO2 pulses: red ${2 * spo2Pulse.red} µs, IR ${2 * spo2Pulse.ir} µs (the light leak depends on it: calibrate it again)`);
 }
 async function startLeakCal() {
   if (!ppg) return;
@@ -861,6 +890,13 @@ $('read').onclick = async () => {
   try { log(`read 0x${hex(r)}..: ${(await readRegs(r, n)).map(hex).join(' ')}`); } catch (e) { log(`read failed: ${e.message}`); }
 };
 $('sweep').onclick = sweep;
+for (const ch of ['red', 'ir']) {
+  $(ch + 'cur').oninput = showSpo2Currents;
+  $(ch + 'cur').onchange = () => sendSpo2Currents()
+    .then(() => log(`SpO2 brightness: red ${$('redcur').value}, IR ${$('ircur').value}`)).catch(e => log(e.message));
+  $(ch + 'pulse').onchange = () => sendSpo2Pulses(true).catch(e => log(e.message));
+}
+showSpo2Currents();
 $('spo2on').onchange = () => setSpo2($('spo2on').checked).catch(e => log(e.message));
 $('leakcal').onclick = () => startLeakCal().catch(e => log(e.message));
 $('trendclear').onclick = () => { trend.length = 0; hrv.ibis.length = 0; hrv.prev = null; };
