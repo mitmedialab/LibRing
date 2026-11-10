@@ -659,7 +659,7 @@ async function setSpo2(on) {
   traces[0].length = traces[1].length = redT.length = irT.length = 0;
   hrv.prev = null;
   await command(CMD_MODE, on ? 1 : 0);  // restarts the ring's gain control
-  if (on) await sendLeak();
+  if (on) { await sendLeak(); await sendSpo2Currents(); await sendSpo2Pulses(false); await keepSpo2Ir(); }
   log(`SpO2 mode ${on ? 'on' : 'off'}`);
 }
 // Red / IR brightness ([0xF7, red, IR]; the ring halves or doubles it when its offset DAC runs out)
@@ -736,7 +736,14 @@ async function setLed(name) {
   traces[1].length = 0;
   await command(CMD_LED, name === 'off' ? 0 : LEDS[name]);  // restarts the ring's AGC
   if (name !== 'off' && !$('auto').checked) await writeReg(REG_LED_CUR, current);
+  await keepSpo2Ir();
   log(`LED ${name}`);
+}
+// Firmware up to V0.3: with the LED off, the SpO2 mode lost its IR (LED select of phase 3,
+// register 0x2b bits 3:0, not written). Phase 2 off + phase 3 IR:
+const REG_LED_SEL = 0x2b, LED_SEL_IR_PHASE3 = 0x02;
+async function keepSpo2Ir() {
+  if (ppg && led === 'off' && $('spo2on').checked) await writeReg(REG_LED_SEL, LED_SEL_IR_PHASE3);
 }
 
 // ---- registers ----
