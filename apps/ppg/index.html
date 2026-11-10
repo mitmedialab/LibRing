@@ -258,6 +258,7 @@ let device = null, ppg = null, busy = Promise.resolve();
 const traces = [[], []];       // [other phase (SpO2 mode: dark), LED channel (green - dark)]
 const redT = [], irT = [];     // SpO2 mode: raw red and IR
 let lastDark = 0, leakCal = null;
+const LEAK_TIMEOUT_MS = 30000;  // the ring needs both channels settled for 3 s
 let ledCount = 0;              // LED channel samples received (absolute index for the beats)
 const hrv = {lastBeat: -1e9, prev: null, validFrom: 0, ibis: []};   // ibis: {t (ms), ibi (ms)}
 const trend = [];              // one point per second: {hr, rmssd, spo2} (NaN: none)
@@ -621,6 +622,7 @@ function renderSpo2() {
   const noLeak = !a.leak[0] && !a.leak[1];
   let info;
   if (a.leakRunning || leakCal) info = 'Measuring the light leak: keep the ring off the finger, in the dark…';
+  else if ((!a.redLock || !a.irLock) && !$('auto').checked) info = 'Turn Auto on: the ring adjusts red / IR only with it';
   else if (!a.redLock || !a.irLock) info = 'Adjusting red / IR…';
   else if (a.motion > 25) info = 'Moving: keep the hand still';
   else if (!a.ratio) info = 'Measuring…';
@@ -654,6 +656,11 @@ async function setSpo2(on) {
 async function startLeakCal() {
   if (!ppg) return;
   if (!$('spo2on').checked) { $('spo2on').checked = true; await setSpo2(true); }
+  if (!$('auto').checked) {  // the ring adjusts the red / IR offsets only with its gain control on
+    $('auto').checked = true;
+    await command(CMD_AGC, 1);
+    log('Auto turned on (needed to adjust red / IR)');
+  }
   await gatt(() => ppg.writeValueWithResponse(new Uint8Array([CMD_LEAK_MEASURE])));
   leakCal = {t0: performance.now(), seen: false};
   $('leakcal').disabled = true;
@@ -661,14 +668,19 @@ async function startLeakCal() {
 }
 function leakStep() {
   const a = agcState;
-  if (a.leakRunning) { leakCal.seen = true; return; }
-  if (leakCal.seen && (a.leak[0] || a.leak[1])) {
+  const late = performance.now() - leakCal.t0 > LEAK_TIMEOUT_MS;
+  if (a.leakRunning && !late) { leakCal.seen = true; return; }
+  if (leakCal.seen && !a.leakRunning && (a.leak[0] || a.leak[1])) {
     saveLeak({red: a.leak[0], ir: a.leak[1]});
     log(`light leak measured and saved for ${device.name}: red ${a.leak[0] * 16}, IR ${a.leak[1] * 16} counts per current unit`);
-  } else if (performance.now() - leakCal.t0 < 20000) {
+  } else if (!late) {
     return;
   } else {
-    log('light leak measurement failed (is the ring in SpO2 mode, off the finger?)');
+    const unlocked = [!a.redLock && 'red', !a.irLock && 'IR'].filter(Boolean).join(' and ');
+    log(`light leak measurement failed${unlocked ? ` (${unlocked} not settled: ring off the finger, still, in the dark?)` : ''}`);
+    const l = loadLeak() || {red: 0, ir: 0};  // stops the ring's measurement, keeps the previous leak
+    gatt(() => ppg.writeValueWithResponse(new Uint8Array([CMD_LEAK, l.red & 255, l.red >> 8, l.ir & 255, l.ir >> 8])))
+      .catch(e => log(e.message));
   }
   leakCal = null;
   $('leakcal').disabled = !ppg;
