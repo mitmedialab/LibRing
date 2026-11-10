@@ -278,14 +278,15 @@ void ppg_set_led(uint8_t led)
 {
     agc.led = led;
     hr_restart();
+    // phase 2 LED driver; phase 3: none (ambient) in heart-rate mode, IR in SpO2 mode
+    // (also with phase 2 off: SpO2 needs its IR)
+    hx3918_write_reg(0x2b, led | (mode == PPG_MODE_SPO2 ? LDR_IR_PHASE3 : 0));
     if (led == PPG_LED_OFF) {
         agc.current = 0;
         hx3918_write_reg(0x28, 0);
         agc.state = PPG_AGC_OFF;
         return;
     }
-    // phase 2 LED driver; phase 3: none (ambient) in heart-rate mode, IR in SpO2 mode
-    hx3918_write_reg(0x2b, led | (mode == PPG_MODE_SPO2 ? LDR_IR_PHASE3 : 0));
     agc.state = agc.enabled ? PPG_AGC_START : PPG_AGC_OFF;
     if (!agc.enabled) {
         hx3918_write_reg(0x28, agc.current);
