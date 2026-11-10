@@ -96,8 +96,9 @@
         <button class="led-btn" data-led="red" style="--c: var(--red)"><span class="dot"></span>Red</button>
         <button class="led-btn" data-led="ir" style="--c: var(--ir)"><span class="dot"></span>IR</button>
       </div>
-      <label class="inline">Brightness <input type="range" id="current" min="0" max="80" value="2">
-        <span id="currentv" style="width: 72px; color: var(--text)">2</span></label>
+      <button id="ledcheck" disabled title="The selected LED at maximum for 6 s (current 255, 510 µs pulses, 100 Hz), then back to the previous settings">Camera check</button>
+      <label class="inline">Brightness <input type="range" id="current" min="0" max="255" value="2">
+        <span id="currentv" style="width: 104px; color: var(--text)">2</span></label>
       <label class="inline">Pulse <select id="ontime">
         <option value="16">32 µs</option><option value="32" selected>64 µs</option>
         <option value="64">128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option>
@@ -105,8 +106,10 @@
       <label class="inline"><input type="checkbox" id="auto" checked> Auto (ring)</label>
     </div>
     <p class="hint" id="agcinfo"></p>
-    <p class="hint">Heart rate: green on the finger. Red and IR are for SpO2 (IR shows only through a phone camera).
-      Auto: the ring's gain control (bright LED + offset DACs); moving the brightness or pulse sets manual mode.</p>
+    <p class="hint">Heart rate: green on the finger. Red and IR are for SpO2. Auto: the ring's gain control (bright LED +
+      offset DACs); moving the brightness or pulse sets manual mode. The LEDs flash briefly (25 times per second): IR
+      is invisible to the eye and too dim for most phone cameras in normal use. Camera check: the selected LED at
+      maximum for 6 s, look through the phone's front camera (rear cameras usually filter IR).</p>
   </div>
 
   <div class="panel" id="livepanel">
@@ -234,6 +237,7 @@ const FULL = 257700;           // LED channel ceiling (saturation)
 const LEDS = {green: 0x10, red: 0x40, ir: 0x20};
 const REG_LED_CUR = 0x28, REG_ON_TIME = 0x1e;
 const CMD_AGC = 0xfc, CMD_LED = 0xfb;  // [0xFC, on], [0xFB, LED select]
+const REG_PERIOD_LO = 0x18, REG_PERIOD_HI = 0x19; // sample period: 32000 / Hz (0x0500: 25 Hz)
 const CMD_MODE = 0xfa, CMD_LEAK = 0xf9, CMD_LEAK_MEASURE = 0xf8; // [0xFA, 0 HR / 1 SpO2], [0xF9, red, IR (u16)], [0xF8]
 const HEADER = 35;                      // PPG_HEADER, ppg_read() in src/ppg/HX3918.h
 const AGC_STATES = ['manual', 'starting', 'setting current', 'setting offset', 'locked'];
@@ -746,8 +750,34 @@ async function restart() {
   await startSensor();
   log('sensor restarted');
 }
+// Camera check: the selected LED at maximum for 6 s, visible through a phone camera
+// (normally 25 short pulses per second, ~0.3 % of the time: too dim for IR), then the
+// previous settings again
+async function ledCheck() {
+  if (!ppg || led === 'off') { log('select a LED first'); return; }
+  $('ledcheck').disabled = true;
+  try {
+    await command(CMD_AGC, 0);
+    await command(CMD_LED, LEDS[led]);
+    await writeReg(REG_LED_CUR, 255);
+    await writeReg(REG_ON_TIME, 255);                       // 510 us pulses
+    await writeReg(REG_PERIOD_LO, 0x40); await writeReg(REG_PERIOD_HI, 0x01); // 320: 100 Hz
+    log(`camera check: ${led} at maximum for 6 s`);
+    await new Promise(r => setTimeout(r, 6000));
+  } finally {
+    if (ppg) {
+      await writeReg(REG_PERIOD_LO, 0x00); await writeReg(REG_PERIOD_HI, 0x05);  // 25 Hz
+      if (!$('auto').checked) await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
+      await command(CMD_AGC, $('auto').checked ? 1 : 0);
+      await setLed(led);  // restarts the ring's AGC (or sets the manual current)
+      log('camera check done');
+    }
+    $('ledcheck').disabled = !ppg;
+  }
+}
+
 function setConnected(on) {
-  for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep', 'leakcal']) $(id).disabled = !on;
+  for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep', 'leakcal', 'ledcheck']) $(id).disabled = !on;
   $('connect').disabled = on;
 }
 async function connect() {
@@ -795,6 +825,7 @@ $('disconnect').onclick = () => device && device.gatt.disconnect();
 $('restart').onclick = restart;
 $('readall').onclick = readAll;
 document.querySelectorAll('.led-btn').forEach(b => { b.onclick = () => setLed(b.dataset.led).catch(e => log(e.message)); });
+$('ledcheck').onclick = () => ledCheck().catch(e => log(`camera check: ${e.message}`));
 $('current').oninput = async () => {
   if ($('auto').checked) { $('auto').checked = false; if (ppg) await command(CMD_AGC, 0); }
   setCurrent(parseInt($('current').value, 10), 'manual').catch(e => log(e.message));
