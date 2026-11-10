@@ -192,6 +192,15 @@ static void display_next_mode(void)
     arch_printf("Display mode: %d\r\n", display_mode);
 }
 
+// Display mode set by the client ([0xF4, mode], see user_ppg_config()): steps through
+// the modes as the long press does
+static void display_set_mode(display_mode_t mode)
+{
+    for (int i = 0; i < 3 && display_mode != mode; i++) {
+        display_next_mode();
+    }
+}
+
 // Button held RESET_PRESS_TIME after the long press: reset the ring
 static void button_reset_timer_cb(void)
 {
@@ -517,6 +526,7 @@ static void debug_read(void)
 //   [0xF6, line, mask]  display test: also light the LEDs of mask (bit i = segment i)
 //                       on line 0-5 (5: P2_9, not used by the display); line 0xFF:
 //                       clear all
+//   [0xF4, mode]        display mode: 0 fluid, 1 ring ID, 2 off (as the long press)
 // These command bytes are also trim registers (0xF0-0xFB) of the sensor: they can't
 // be written with [reg, value]. Needs the I2C controller (set up 5 s after boot or
 // by a subscription).
@@ -538,6 +548,10 @@ void user_ppg_config(const uint8_t *value, uint16_t len) {
         ppg_set_spo2_currents(value[1], value[2]);
     } else if (len == 1 && value[0] == 0xF5) {
         debug_read();
+    } else if (len == 2 && value[0] == 0xF4) {
+        if (value[1] <= DISPLAY_OFF) {
+            display_set_mode((display_mode_t)value[1]);
+        }
     } else if (len == 3 && value[0] == 0xF6) {
         if (value[1] < 6) {
             LED_overlay[value[1]] = value[2] & 0x7F;
