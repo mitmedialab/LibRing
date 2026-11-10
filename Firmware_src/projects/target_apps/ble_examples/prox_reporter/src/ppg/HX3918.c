@@ -134,7 +134,8 @@ static uint8_t mode = PPG_MODE_HR;
 static const uint8_t spo2_setup[][2] = {
     {0x17, 0xff},                             // full resolution (OSR 1024) on all phases: the
                                               // HR setup has 256 on phases 0/1 (saturates at ~32k)
-    {0x1c, 0x40}, {0x1d, 0x40}, {0x1e, 0x40}, {0x1f, 0x40}, // 128 us pulses
+    {0x1c, 0x40}, {0x1e, 0x40},               // dark, green: 128 us pulses
+    {0x1d, 0x20}, {0x1f, 0x20},               // red, IR: 64 us (see SPO2_RED_CURRENT)
     {0x2a, 0x04},                             // phase 0: no LED, phase 1: red (LDR2)
     {0x23, 0x7f},                             // LEDs on phases 1-3, offset DACs on
     {0x26, 0x00}, {0x2c, 0x00},
@@ -145,9 +146,11 @@ static const uint8_t spo2_setup[][2] = {
 // Red and IR channels. The LEDs are so close to the photodiode that they saturate
 // it even at the lowest current: the offset DAC of their phase (current subtracted
 // from the photodiode) keeps the raw reading in 150k-350k, ~140k counts per step.
-// A low current is enough (the signal-to-noise ratio doesn't improve with it).
-#define SPO2_RED_CURRENT 8
-#define SPO2_IR_CURRENT  24
+// Current 32 (25 mA) with 64 us pulses gave the cleanest pulses in a sweep on 5 rings
+// (currents 8-128, pulses 32-256 us): 1.2x (red) and 1.4x (IR) the pulse-to-noise
+// ratio of 8 with 128 us; more current makes red much noisier, 256 us doesn't settle.
+#define SPO2_RED_CURRENT 32
+#define SPO2_IR_CURRENT  32
 #define RAW_CLIP_LOW     20000   // the raw readings clip at ~1k and ~523k
 #define RAW_CLIP_HIGH    500000
 #define RAW_LOW          150000
@@ -388,7 +391,7 @@ bool ppg_set_mode(uint8_t new_mode)
         ok &= write_table(spo2_setup, sizeof(spo2_setup) / sizeof(spo2_setup[0]));
         for (int i = 0; i < 2; i++) {
             // start with the offset of a typical ring (raw readings settle in < 1 s)
-            spo2_ch[i].idac = i == 0 ? 14 : 6;
+            spo2_ch[i].idac = i == 0 ? 28 : 4;
             spo2_ch[i].locked = false;
             spo2_ch[i].before = 0;
             spo2_channel_write(&spo2_ch[i]);
