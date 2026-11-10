@@ -174,12 +174,12 @@
       </span>
     </div>
     <div class="row" style="margin-top: 6px">
-      <label class="inline"><b style="color: var(--red)">Red</b> brightness <input type="range" id="redcur" min="1" max="255" value="8">
-        <span id="redcurv" style="width: 96px; color: var(--text)">8</span></label>
-      <label class="inline">pulse <select id="redpulse"><option value="16">32 µs</option><option value="32">64 µs</option><option value="64" selected>128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option></select></label>
-      <label class="inline"><b style="color: var(--ir)">IR</b> brightness <input type="range" id="ircur" min="1" max="255" value="24">
-        <span id="ircurv" style="width: 96px; color: var(--text)">24</span></label>
-      <label class="inline">pulse <select id="irpulse"><option value="16">32 µs</option><option value="32">64 µs</option><option value="64" selected>128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option></select></label>
+      <label class="inline"><b style="color: var(--red)">Red</b> brightness <input type="range" id="redcur" min="1" max="255" value="32">
+        <span id="redcurv" style="width: 96px; color: var(--text)">32</span></label>
+      <label class="inline">pulse <select id="redpulse"><option value="16">32 µs</option><option value="32" selected>64 µs</option><option value="64">128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option></select></label>
+      <label class="inline"><b style="color: var(--ir)">IR</b> brightness <input type="range" id="ircur" min="1" max="255" value="32">
+        <span id="ircurv" style="width: 96px; color: var(--text)">32</span></label>
+      <label class="inline">pulse <select id="irpulse"><option value="16">32 µs</option><option value="32" selected>64 µs</option><option value="64">128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option></select></label>
     </div>
     <div class="live">
       <div>
@@ -197,7 +197,9 @@
     <p class="hint">Not calibrated, not a medical measurement: ratio of the red and IR pulses (each divided by
       the light that went through the finger) with the textbook curve 110 &minus; 25&nbsp;R. Most of the light
       reaching the sensor leaks inside the ring: the leak calibration measures it (kept in this browser, per
-      ring). The ring shows a value only when the red and IR pulses match (correlation &ge; 90&nbsp;%).</p>
+      ring and pulse length). The ring shows a value only when the red and IR pulses match (correlation &ge;
+      90&nbsp;%). Wear the ring with the sensor on the palm side, hand palm up and relaxed, nothing pressing
+      on the sensor: palm down on a table, the pulses were ~2.5&times; weaker.</p>
   </div>
 
   <div class="panel" id="trendpanel">
@@ -658,14 +660,16 @@ function renderSpo2() {
 }
 
 // ---- SpO2 mode and leak calibration (kept per ring name in this browser) ----
-const leakKey = () => `libring-leak-${device ? device.name : ''}`;
+// per ring and red / IR pulse lengths (the leak per current unit depends on them)
+const leakKey = () => `libring-leak-${device ? device.name : ''}-p${$('redpulse').value}-${$('irpulse').value}`;
 function loadLeak() { try { return JSON.parse(localStorage.getItem(leakKey())); } catch (e) { return null; } }
 function saveLeak(l) { try { localStorage.setItem(leakKey(), JSON.stringify(l)); } catch (e) { /* private mode */ } }
 async function sendLeak() {
-  const l = loadLeak();
-  if (!l || !ppg) return;
+  if (!ppg) return;
+  const l = loadLeak() || {red: 0, ir: 0};  // 0: not calibrated (for these pulse lengths)
   await gatt(() => ppg.writeValueWithResponse(new Uint8Array([CMD_LEAK, l.red & 255, l.red >> 8, l.ir & 255, l.ir >> 8])));
-  log(`light leak sent: red ${l.red * 16}, IR ${l.ir * 16} counts per current unit`);
+  log(l.red || l.ir ? `light leak sent: red ${l.red * 16}, IR ${l.ir * 16} counts per current unit`
+                    : 'light leak not calibrated for this ring and these pulse lengths');
 }
 async function setSpo2(on) {
   if (!ppg) return;
@@ -677,9 +681,11 @@ async function setSpo2(on) {
   log(`SpO2 mode ${on ? 'on' : 'off'}`);
 }
 // Red / IR brightness ([0xF7, red, IR]; the ring halves or doubles it when its offset DAC runs out)
-// and pulse length (on-time of phase 1 = red 0x1d, phase 3 = IR 0x1f; SpO2 mode starts at 128 us)
+// and pulse length (on-time of phase 1 = red 0x1d, phase 3 = IR 0x1f), sent at each SpO2 start
+// (the firmware default changed: 128 us up to V0.3). Default 32 (25 mA) with 64 us: the cleanest
+// pulses in a sweep on 5 rings.
 const REG_PULSE = {red: 0x1d, ir: 0x1f};
-const spo2Pulse = {red: 64, ir: 64};
+const spo2Pulse = {red: 32, ir: 32};
 const mA = c => (c * 200 / 255).toFixed(1);
 function showSpo2Currents() {
   for (const ch of ['red', 'ir']) $(ch + 'curv').textContent = `${$(ch + 'cur').value} (${mA($(ch + 'cur').value)} mA)`;
@@ -692,9 +698,10 @@ async function sendSpo2Pulses(changed) {
   if (!ppg || !$('spo2on').checked) return;
   for (const ch of ['red', 'ir']) {
     spo2Pulse[ch] = parseInt($(ch + 'pulse').value, 10);
-    if (spo2Pulse[ch] !== 64 || changed) await writeReg(REG_PULSE[ch], spo2Pulse[ch]);
+    await writeReg(REG_PULSE[ch], spo2Pulse[ch]);
   }
-  if (changed) log(`SpO2 pulses: red ${2 * spo2Pulse.red} µs, IR ${2 * spo2Pulse.ir} µs (the light leak depends on it: calibrate it again)`);
+  if (changed) log(`SpO2 pulses: red ${2 * spo2Pulse.red} µs, IR ${2 * spo2Pulse.ir} µs (the light leak is kept per pulse length)`);
+  if (changed) await sendLeak();
 }
 async function startLeakCal() {
   if (!ppg) return;
