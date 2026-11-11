@@ -58,6 +58,7 @@
   .trend-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 8px; }
   .trend-head b { color: var(--text); }
   .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  .hint a { color: var(--accent); }
   .meter { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; width: 160px; }
   .meter > div { height: 100%; background: var(--led); width: 0; transition: width .3s; }
 
@@ -119,7 +120,8 @@
     <p class="hint">Heart rate: green on the finger. Red and IR are for SpO2. Auto: the ring's gain control (bright LED +
       offset DACs); moving the brightness or pulse sets manual mode. The LEDs flash briefly (25 times per second): IR
       is invisible to the eye and too dim for most phone cameras in normal use. Camera check: the selected LED at
-      maximum for 6 s, look through the phone's front camera (rear cameras usually filter IR).</p>
+      maximum for 6 s, look through the phone's front camera (rear cameras usually filter IR).
+      To check the ring's heart rate, you can try to measure it with the <a href="../rppg/">webcam heart rate monitor</a> (very experimental).</p>
   </div>
 
   <div class="panel" id="livepanel">
