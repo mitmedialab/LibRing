@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LibRing PPG</title>
+<script src="../shared/webble-notice.js"></script>
 <style>
   :root {
     --bg: #f5f6f8; --panel: #ffffff; --text: #1b2130; --muted: #667085; --border: #dde1e8;
@@ -1038,7 +1039,7 @@ function showSpectral() {
 setInterval(() => { updateHrv(); if (ppg) updateTrend(); showSpectral(); }, 1000);
 buildRegs();
 showLed();
-if (!navigator.bluetooth) status('Web Bluetooth not available: use Chrome or Edge', 'err');
+if (!navigator.bluetooth) status('Web Bluetooth not available: use Chrome or Edge (iPhone / iPad: the Bluefy app)', 'err');
 requestAnimationFrame(render);
 </script>
 </body>

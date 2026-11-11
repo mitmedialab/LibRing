@@ -1,3 +1,4 @@
+import '../../shared/webble-notice.js';
 import { WebMidi, Output } from 'webmidi';
 import { connectToBLE, disconnectFromBLE, setNtfHandler, setBtnHandler, setDisconnectHandler } from './lib/shared/accelerometer/ble';
 import { AccelChart } from './lib/shared/plot';

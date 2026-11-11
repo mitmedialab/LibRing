@@ -163,7 +163,7 @@ async function connectOnce() {
  */
 export async function connectToBLE(onStatus: StatusHandler = () => {}) {
     if (!navigator.bluetooth) {
-        throw new Error('Web Bluetooth is not available in this browser: use Chrome or Edge');
+        throw new Error('Web Bluetooth is not available in this browser: use Chrome or Edge (iPhone / iPad: the Bluefy app)');
     }
 
     console.log('Requesting Bluetooth devices...');

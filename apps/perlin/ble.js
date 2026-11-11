@@ -101,7 +101,7 @@
   async function connectToBLE() {
     try {
       if (!navigator.bluetooth) {
-        alert('Web Bluetooth API is not supported in this browser');
+        alert('Web Bluetooth is not available in this browser: use Chrome or Edge (iPhone / iPad: the Bluefy app)');
         return;
       }
 
