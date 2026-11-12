@@ -69,6 +69,7 @@ jobs:
                   mkdir -p deploy/camera
                   mkdir -p deploy/ppg
                   mkdir -p deploy/rppg
+                  mkdir -p deploy/multi-ring
                   mkdir -p deploy/shared
 
             - name: Copy build outputs
@@ -81,6 +82,7 @@ jobs:
                   cp -r apps/camera/* deploy/camera/
                   cp -r apps/ppg/* deploy/ppg/
                   cp -r apps/rppg/* deploy/rppg/
+                  cp -r apps/multi-ring/* deploy/multi-ring/
                   cp -r apps/shared/* deploy/shared/
 
             #

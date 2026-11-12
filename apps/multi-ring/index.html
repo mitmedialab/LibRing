@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LibRing Multi-ring</title>
+<script src="../shared/webble-notice.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1b2130; --muted: #667085; --border: #dde1e8;
+    --accent: #2563eb; --warn: #b42318; --ok: #067647; --bar: #93b4f5; --grid: #eef0f4;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11141a; --panel: #1a1f29; --text: #e6e9ef; --muted: #98a2b3; --border: #2c3442;
+            --accent: #6d9cff; --warn: #f97066; --ok: #47cd89; --bar: #34558f; --grid: #232a36;
+            --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+            --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0 0 0 auto; } /* right, the buttons left (near the Bluetooth chooser) */
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 14px; margin-bottom: 12px; }
+  .muted { color: var(--muted); }
+  .err { color: var(--warn); }
+  .ok { color: var(--ok); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; }
+  td.bar { width: 40%; }
+  .meter { height: 10px; border-radius: 5px; background: var(--bar); }
+  tr.stale td { color: var(--muted); }
+  #cards { display: flex; flex-wrap: wrap; gap: 12px; }
+  .card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; flex: 1 1 220px; max-width: 280px; }
+  .card h3 { margin: 0 0 4px; font-size: 15px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .card .v { font-variant-numeric: tabular-nums; }
+  .card button { padding: 2px 8px; font-size: 12px; }
+  .card .btns { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+  #log { white-space: pre-wrap; font: 12px/1.4 ui-monospace, monospace; color: var(--muted);
+         max-height: 180px; overflow-y: auto; margin: 0; }
+  .scroll { overflow-x: auto; }
+  .chart { position: relative; }
+  .chart canvas { width: 100%; height: 220px; display: block; cursor: crosshair; }
+  .axis { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .legend span.key { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  .legend b { font-weight: 600; }
+  span.key { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  /* all the "heard by" charts on one line (--n: number of charts), 2 per line on phones */
+  .peercharts { display: grid; grid-template-columns: repeat(var(--n, 1), minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+  .peerchart .legend { font-size: 12px; gap: 2px 10px; }
+  @media (max-width: 700px) { .peercharts { grid-template-columns: repeat(min(var(--n, 1), 2), minmax(0, 1fr)); } }
+  .peerchart h3 { font-size: 14px; margin: 0 0 4px; }
+  .peerchart canvas { height: 160px; }
+  #matrix td, #matrix th { text-align: center; }
+  .sortbar { display: inline-flex; align-items: center; font-size: 13px; }
+  .sortbar select { font: inherit; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border);
+                    background: var(--panel); color: var(--text); margin-left: 6px; }
+  #matrix td:first-child, #matrix th:first-child { text-align: left; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <button id="add" class="primary" title="Opens the chooser again after each ring: cancel it when done">Add rings</button>
+    <button id="disconnectAll" title="Disconnect every ring (they stay allowed: Reconnect connects them again)">Disconnect all</button>
+    <button id="known" title="Reconnect the rings this page was given before, without the chooser">Reconnect rings</button>
+    <button id="scan" title="Measures the signal strength of the rings around this computer">Scan RSSI</button>
+    <button id="prox" class="primary" title="Each connected ring measures the signal strength of the other rings">Stop ring-to-ring RSSI</button>
+    <label class="sortbar" title="Orders the tables, the graphs and their legends (updated every 2 s): by name, RSSI (strongest first), ring-to-ring reports per second, or advertisements heard per second">Sort by
+      <select id="sortBy">
+        <option value="name">name</option>
+        <option value="rssi">RSSI</option>
+        <option value="reports">reports/s</option>
+        <option value="heard">heard/s</option>
+      </select></label>
+    <h1>𓃊𓃊 Multi-ring experiments</h1>
+  </header>
+
+  <section class="panel">
+    <h2>Signal strength between each ring and this computer (RSSI)</h2>
+    <p class="muted" style="margin: 0 0 8px">
+      Connected rings measure it themselves and send it with the accelerometer data (firmware of
+      2026-11-11 or later). Rings that aren't connected are measured from their advertisements by
+      this computer, with "Scan RSSI" (not available in every browser). "Ignored": readings below
+      −100 dBm that a ring reports now and then, weaker than anything its radio can receive
+      (about −94 dBm), probably taken when no packet came in: left out of the RSSI and the graph.
+      <span id="scanState"></span>
+    </p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Ring</th><th>RSSI</th><th class="bar"></th><th>Updated</th><th title="Readings below −100 dBm, left out (see above)">Ignored</th><th title="Estimated by each ring, which learns its range while charging (hover a value for the details), every 10 s">Battery</th></tr></thead>
+        <tbody id="rssiRows"><tr><td colspan="7" class="muted">Connect rings, or press "Scan RSSI".</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>RSSI measured by each ring <span class="muted" style="font-weight: normal">(link to this computer, last 30 s)</span></h2>
+    <div class="chart"><canvas id="rssiChart"></canvas></div>
+    <div class="axis"><span>−30 s</span><span id="hoverTime"></span><span>now</span></div>
+    <div class="legend" id="legend"><span class="muted">Connect rings with a recent firmware (2026-11-11+).</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>RSSI between rings <span class="muted" style="font-weight: normal">(measured by each ring, last 30 s)</span></h2>
+    <p class="muted" style="margin: 0 0 8px">As soon as it is connected, each ring alternates between
+      advertising (so that the others hear it) and listening, and reports the RSSI of every ring it
+      heard: smoothed (low-pass filters, ~0.8 s in all), and advertisements heard per second. Rings that aren't
+      connected are heard too. Uses more battery ("Stop ring-to-ring RSSI" to save it).</p>
+    <div class="scroll"><table id="matrix"></table></div>
+    <div id="peerCharts" class="peercharts"><span class="muted">No measurement yet.</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Connected rings</h2>
+    <div id="cards"><span class="muted">None yet: "Add rings" (pick one ring per chooser, cancel when done).</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script type="module">
+import { drawSeries, prepareCanvas } from '../shared/plot.js';
+
+const SERVICE = '00112233-4455-6677-8899-aabbccddeeff';
+const ACCEL = 'f2909165-4ce5-8da2-4c10-8b38c19f65cc';
+const BTN = '368d553d-154a-1aa8-3f46-2e87b5e5cd54';
+const PROX = '249165b2-ca83-40e0-9b5e-e67d527521f6'; // ring-to-ring RSSI (firmware 2026-11-11+)
+const BATT = 'e15175c3-8006-0d8a-7048-08c0353e678a'; // battery: reading (BE), charging, 0x01
+
+// Battery reading (P0_1 ADC) -> volts and %, estimated: ~323 when full at rest, scaled from
+// that (not calibrated with a voltmeter). Same in Eclipse/suota_flash.py (make scan).
+const BATTERY_FULL_READING = 323, BATTERY_FULL_VOLTS = 4.15;
+const LIPO_CURVE = [[4.15, 100], [4.05, 90], [3.95, 78], [3.87, 65], [3.80, 50], [3.75, 40],
+                    [3.70, 30], [3.65, 20], [3.60, 12], [3.50, 5], [3.40, 0]]; // resting volts, %
+function batteryText(reading, charging) {
+  const volts = reading * BATTERY_FULL_VOLTS / BATTERY_FULL_READING;
+  if (charging) return `charging (${volts.toFixed(2)} V)`; // higher than at rest while charging
+  let pct = volts >= LIPO_CURVE[0][0] ? 100 : 0;
+  for (let i = 0; i + 1 < LIPO_CURVE.length; i++) {
+    const [v1, p1] = LIPO_CURVE[i], [v0, p0] = LIPO_CURVE[i + 1];
+    if (volts >= v0 && volts < v1) pct = p0 + (p1 - p0) * (volts - v0) / (v1 - v0);
+  }
+  return `≈${pct.toFixed(0)} % (${volts.toFixed(2)} V)`;
+}
+const NAME_PREFIX = 'LibRing';
+const RSSI_ALPHA = 0.25;   // exponential average of the RSSI
+const RSSI_FLOOR = -100;   // link RSSI readings below: not real (see onAccel)
+const STALE_MS = 3000;     // not heard for that long: greyed out
+const CHART_DT = 100;      // RSSI charts: one point per ring every 100 ms
+const CHART_SPAN = 300;    // ... over 30 s
+const LPF_TAU = 500;       // low-pass filter of the RSSI values (time constant, ms)
+const DISPLAY_TAU = 300;   // + on the plotted lines, every chart point (no steps at each report)
+const DISPLAY_K = 1 - Math.exp(-CHART_DT / DISPLAY_TAU);
+// Next point of a smoothed line: null (gap) when there is no value
+const smooth = (prev, v) => v == null ? null : prev == null ? v : prev + DISPLAY_K * (v - prev);
+
+// First-order low-pass filter for irregularly timed samples: { value, time }
+function lowPass(f, x, now, tau = LPF_TAU) {
+  if (f.value == null || now - f.time > 5 * tau) f.value = x; // start (again)
+  else f.value += (1 - Math.exp(-(now - f.time) / tau)) * (x - f.value);
+  f.time = now;
+  return f.value;
+}
+const FORGET_MS = 60000;   // ... and removed from the list
+
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const bt = navigator.bluetooth;
+const t0 = performance.now();
+
+function log(msg) {
+  const line = `${((performance.now() - t0) / 1000).toFixed(1).padStart(6)} s  ${msg}`;
+  console.log(line);
+  const el = $('log'); el.textContent += line + '\n'; el.scrollTop = el.scrollHeight;
+}
+function withTimeout(p, ms, what) {
+  let timer;
+  return Promise.race([p, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what}: no answer after ${ms / 1000} s`)), ms); })])
+    .finally(() => clearTimeout(timer));
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---- connected rings -------------------------------------------------------------
+
+const rings = new Map(); // device.id -> Ring
+window.rings = rings;
+
+class Ring {
+  constructor(device) {
+    this.device = device;
+    this.name = device.name || device.id.slice(0, 8);
+    this.mode = '-';   // notify, or poll (Chrome on Linux: no notifications on a reconnection)
+    this.times = [];   // arrival times of the accelerometer samples (last 3 s)
+    this.count = 0;
+    this.xyz = [0, 0, 0];
+    this.button = 0;
+    this.status = 'new';
+    this.listening = false;
+    this.history = [];      // raw link RSSI every CHART_DT ms, null: no value
+    this.peers = new Map(); // ring heard by this one (name) -> { avg (filtered), time, times, history }
+    this.linkLpf = {};
+    this.reportTimes = []; this.lostReports = 0;
+    device.addEventListener('gattserverdisconnected', () => {
+      this.polling = false; this.proxPolling = false;
+      this.setStatus('disconnected');
+    });
+  }
+  get connected() { return !!this.device.gatt?.connected; }
+  setStatus(s) { this.status = s; log(`${this.name}: ${s}`); render(); }
+  onAccel(v) {
+    const sens = v.byteLength > 6 ? v.getUint8(6) : 0;
+    const k = [1, 2, 4, 8][sens] * 0.001;
+    this.xyz = [0, 2, 4].map((o) => (v.getInt16(o, false) >> 4) * k);
+    const now = performance.now();
+    this.times.push(now); this.count++;
+    // byte 7 (firmware 2026-11-11+): RSSI of the link measured by the ring, 127 = unknown.
+    // Updated ~4 times per second, so repeated values are only counted once.
+    // Single readings around -105 dBm show up now and then: below the receiver's
+    // sensitivity (~ -94 dBm), so not from a received packet (probably a connection
+    // event without one). Dropped, and counted.
+    const rssi = v.byteLength > 7 ? v.getInt8(7) : 127;
+    if (rssi !== 127 && rssi !== this.lastRawRssi) {
+      if (rssi < RSSI_FLOOR) {
+        this.droppedRssi = (this.droppedRssi || 0) + 1;
+      } else {
+        this.linkRssi = lowPass(this.linkLpf, rssi, now);
+        this.linkRssiTime = now;
+      }
+    }
+    this.lastRawRssi = rssi;
+  }
+  // [n, errors, report number, (id, mean RSSI, count) * n] after each scanning phase
+  // (first test builds: no report number, length 2 + 3 n)
+  onProx(v) {
+    const now = performance.now();
+    if (v.byteLength < 2) return; // nothing reported yet (read before the first report)
+    if (v.byteLength % 3 === 0 && v.getUint8(2) === this.lastSeq) return; // read twice
+    const n = v.getUint8(0);
+    this.proxErrors = v.getUint8(1);
+    const head = v.byteLength % 3 === 0 ? 3 : 2;
+    if (head === 3) {
+      const seq = v.getUint8(2);
+      if (this.lastSeq != null) this.lostReports += (seq - this.lastSeq - 1) & 0xFF;
+      this.lastSeq = seq;
+    }
+    this.reportTimes.push(now);
+    while (now - this.reportTimes[0] > 3000) this.reportTimes.shift();
+    for (let i = 0; i < n && head + 3 * i + 2 < v.byteLength; i++) {
+      const o = head + 3 * i;
+      const id = v.getUint8(o), rssi = v.getInt8(o + 1), count = v.getUint8(o + 2);
+      const name = `LibRing_${id.toString(16).toUpperCase().padStart(2, '0')}`;
+      let p = this.peers.get(name);
+      if (!p) { p = { lpf: {}, times: [], history: [] }; this.peers.set(name, p); ringColor(name); }
+      p.avg = lowPass(p.lpf, rssi, now);
+      p.time = now;
+      for (let k = 0; k < count; k++) p.times.push(now);
+    }
+    for (const p of this.peers.values()) {
+      while (p.times.length && now - p.times[0] > 3000) p.times.shift();
+      p.rate = p.times.length / 3; // advertisements heard per second
+    }
+  }
+  get rate() {
+    const now = performance.now();
+    while (this.times.length && now - this.times[0] > 3000) this.times.shift();
+    return this.times.length / 3;
+  }
+  async connect() {
+    this.setStatus('connecting');
+    const server = await withTimeout(this.device.gatt.connect(), 10000, 'Connection');
+    const service = await server.getPrimaryService(SERVICE);
+    this.accel = await service.getCharacteristic(ACCEL);
+    this.btn = await service.getCharacteristic(BTN);
+    this.prox = null;
+    this.batt = null;
+    try { this.batt = await service.getCharacteristic(BATT); } catch {}
+    try { this.prox = await service.getCharacteristic(PROX); } catch {} // older firmware
+    if (this.prox && !this.proxListening) {
+      this.proxListening = true;
+      this.prox.addEventListener('characteristicvaluechanged', (e) => this.onProx(e.target.value));
+    }
+    if (!this.listening) { // the characteristic objects stay the same across reconnections
+      this.listening = true;
+      this.accel.addEventListener('characteristicvaluechanged', (e) => { if (this.mode === 'notify') this.onAccel(e.target.value); });
+      this.btn.addEventListener('characteristicvaluechanged', (e) => { this.button = e.target.value.getInt8(0); });
+    }
+    this.count = 0; this.mode = 'notify'; this.linkRssi = null; this.lastRawRssi = 127;
+    this.linkLpf = {}; this.lastSeq = null;
+    await this.accel.startNotifications();
+    await this.btn.startNotifications();
+    const start = performance.now();
+    while (!this.count && performance.now() - start < 1500) await sleep(50);
+    if (!this.count) { this.mode = 'poll'; this.poll(); }
+    this.setStatus(this.mode === 'poll' ? 'connected (reading, no notifications)' : 'connected');
+    this.readBattery();
+    if (proxWanted) await setProx(this, true);
+  }
+  async poll() {
+    this.polling = true;
+    for (let i = 0; this.polling && this.connected; i++) {
+      try {
+        this.onAccel(await this.accel.readValue());
+        if (i % 4 === 0) this.button = (await this.btn.readValue()).getInt8(0);
+        if (this.proxPolling) this.onProx(await this.prox.readValue()); // every round: priority
+      } catch (e) { await sleep(200); }
+    }
+  }
+  // Ring-to-ring reports without notifications (Chrome on Linux, see poll()): read
+  // ~6 times per second. In the accelerometer's reading loop if it runs (one request at a
+  // time to the ring), else in its own loop.
+  async pollProx() {
+    if (this.proxPolling) return;
+    this.proxPolling = true;
+    log(`${this.name}: no ring-to-ring notifications, reading the reports instead`);
+    if (this.mode === 'poll') return;
+    while (this.proxPolling && this.proxOn && this.connected) {
+      try { this.onProx(await this.prox.readValue()); } catch (e) { await sleep(200); }
+      await sleep(150);
+    }
+  }
+  disconnect() { this.polling = false; this.proxPolling = false; this.device.gatt.disconnect(); }
+  async readBattery() {
+    if (!this.batt || !this.connected) return;
+    try {
+      const v = await this.batt.readValue();
+      const format = v.byteLength >= 4 ? v.getUint8(3) : 0;
+      const reading = v.getUint16(0, false), charging = v.getUint8(2) !== 0;
+      if (format === 0x02 && v.byteLength >= 8) { // percentage from the ring, learned range
+        const pct = v.getUint8(4), full = v.getUint8(5) + 200, offset = v.getUint8(6), learned = v.getUint8(7);
+        this.battery = {
+          text: `${charging ? 'charging ' : ''}${pct} %` + ((learned & 3) === 3 ? '' : ' (not learned yet)'),
+          tip: `reading ${reading}${charging ? ` (−${offset} while charging)` : ''}, full ${full}` +
+            ` (${learned & 2 ? 'learned' : 'default'}), charging offset ${offset} (${learned & 1 ? 'learned' : 'default'})`,
+        };
+      } else if (format === 0x01) { // first battery firmware: estimated here
+        this.battery = { text: batteryText(reading, charging), tip: `reading ${reading}` };
+      }
+    } catch {} // busy: next time
+  }
+  // Disconnects, and the browser forgets the ring (no more auto-connection; "Add rings"
+  // to pick it again)
+  async forget() {
+    rings.delete(this.device.id);
+    this.disconnect();
+    try { await this.device.forget(); } catch (e) { log(`${this.name}: forget: ${e.message}`); }
+    this.card?.remove();
+    const chart = peerCharts.get(this.name);
+    if (chart) {
+      chart.box.remove(); peerCharts.delete(this.name);
+      $('peerCharts').style.setProperty('--n', peerCharts.size);
+    }
+    linkChart.items.get(this.name)?.remove(); linkChart.items.delete(this.name);
+    if (!rings.size) $('cards').innerHTML = '<span class="muted">None yet: "Add rings" (pick one ring per chooser, cancel when done).</span>';
+    log(`${this.name}: forgotten ("Add rings" to pick it again)`);
+  }
+}
+
+// Linux: BlueZ forgets the rings ~30 s after its last scan, then Chrome refuses to
+// connect ("no longer in range"). Watching their advertisements makes it scan again:
+// all the rings at once for 3 s, then stopped (scanning disturbs the connections).
+let lastRefresh = -1e9;
+async function refreshDiscovery() {
+  if (!BluetoothDevice.prototype.watchAdvertisements || performance.now() - lastRefresh < 15000) return;
+  lastRefresh = performance.now();
+  log('the computer forgot the rings: looking for them (3 s)');
+  const devices = await bt.getDevices();
+  await Promise.all(devices.map((d) => d.watchAdvertisements().catch(() => {})));
+  await sleep(3000);
+  if (!scanOn) for (const d of devices) try { d.unwatchAdvertisements(); } catch {}
+}
+
+// Connections one at a time: several at once overload BlueZ (most of them drop)
+let queue = Promise.resolve();
+function connectRing(device) {
+  let ring = rings.get(device.id);
+  if (!ring) { ring = new Ring(device); rings.set(device.id, ring); }
+  // already connected, or waiting / connecting (e.g. "Add rings" right before the
+  // automatic connection): a second attempt would disconnect it on its errors
+  if (ring.connected || ring.queued) return queue;
+  ring.queued = true;
+  queue = queue.then(async () => {
+    // Spaced attempts: right after a reload, Chrome may still be closing the previous
+    // page's link to the ring ("GATT Error Unknown" at once)
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      if (attempt > 1) await sleep(1000 * (attempt - 1));
+      try { await ring.connect(); break; }
+      catch (e) {
+        ring.setStatus(`attempt ${attempt} failed: ${e.message}`);
+        try { device.gatt.disconnect(); } catch {}
+        if (/no longer in range/i.test(e.message)) await refreshDiscovery();
+      }
+    }
+    ring.queued = false;
+    watch(device); // RSSI again once it advertises (after a disconnection)
+  });
+  return queue;
+}
+
+// The chooser picks one ring: it opens again after each pick (without the rings already
+// added) until it is cancelled, or until the browser wants a new click
+$('add').onclick = async () => {
+  for (;;) {
+    const added = [...rings.values()].map((r) => ({ name: r.name }));
+    let device;
+    try {
+      device = await bt.requestDevice({
+        filters: [{ namePrefix: NAME_PREFIX }], optionalServices: [SERVICE],
+        ...(added.length ? { exclusionFilters: added } : {}),
+      });
+    } catch (e) {
+      if (e.name === 'SecurityError') log('Click "Add rings" again for the next ring');
+      else if (e.name !== 'NotFoundError') log(`Add rings: ${e.message}`); // NotFoundError: cancelled
+      return;
+    }
+    connectRing(device);
+  }
+};
+
+async function connectAllowed(why) {
+  const devices = (await bt.getDevices()).filter((d) => d.name?.startsWith(NAME_PREFIX));
+  log(`${why || 'allowed rings'}: ${devices.map((d) => d.name).join(', ') || 'none'}`);
+  if (!devices.length) log('(Chrome remembers the rings across its restarts only with ' +
+    'chrome://flags/#enable-web-bluetooth-new-permissions-backend enabled)');
+  for (const d of devices) connectRing(d); // queued: one at a time
+}
+$('known').onclick = () => connectAllowed();
+$('disconnectAll').onclick = () => {
+  for (const r of rings.values()) if (r.connected) r.disconnect();
+  log('all rings disconnected');
+};
+
+// Battery of the connected rings, every 10 s (the rings measure it every 10 s)
+setInterval(() => { for (const r of rings.values()) r.readBattery(); }, 10000);
+
+// Leaving or reloading the page: release the rings at once (else the next page can't
+// connect to them for a while)
+window.addEventListener('pagehide', () => {
+  for (const r of rings.values()) try { r.device.gatt.disconnect(); } catch {}
+});
+
+// On load: the rings picked before ("Add rings", remembered by the browser for this
+// site) are connected without any click
+// (after 2 s: right after a reload, Chrome may still be closing the previous page's links,
+// and a ring connected then gets no notifications)
+if (bt?.getDevices) setTimeout(() => connectAllowed('connecting the rings allowed before'), 2000);
+
+// ---- RSSI ------------------------------------------------------------------------
+
+const seen = new Map(); // name -> { rssi, last, times[] }
+
+function onAdvert(name, rssi) {
+  if (!name?.startsWith(NAME_PREFIX) || rssi == null) return;
+  const now = performance.now();
+  let s = seen.get(name);
+  if (!s || now - s.last > STALE_MS) s = { rssi, last: now, times: [] }; // restart the average
+  s.rssi += RSSI_ALPHA * (rssi - s.rssi);
+  s.last = now;
+  s.raw = rssi;
+  s.times.push(now);
+  seen.set(name, s);
+}
+
+// Every LibRing ring around (needs the "scan" permission prompt; on Linux, the Experimental
+// Web Platform features flag, like Web Bluetooth itself)
+let scan = null;
+let scanListening = false;
+async function startScan() {
+  if (!bt.requestLEScan) return false;
+  try {
+    scan = await bt.requestLEScan({ filters: [{ namePrefix: NAME_PREFIX }], keepRepeatedDevices: true });
+    if (!scanListening) {
+      scanListening = true;
+      bt.addEventListener('advertisementreceived', (e) => onAdvert(e.device?.name || e.name, e.rssi));
+    }
+    log('scanning every ring around');
+    return true;
+  } catch (e) {
+    log(`scan: ${e.message}`);
+    return false;
+  }
+}
+
+// Fallback: only the rings this page was given ("Add ring" before), one device at a time
+const watched = new Set();
+async function watch(device) {
+  if (!device.watchAdvertisements || !scanOn) return;
+  if (!watched.has(device.id)) {
+    device.addEventListener('advertisementreceived', (e) => { if (!scan) onAdvert(device.name, e.rssi); });
+  }
+  try { await device.watchAdvertisements(); watched.add(device.id); }
+  catch (e) { log(`${device.name}: can't watch advertisements: ${e.message}`); }
+}
+
+let scanOn = false;
+$('scan').onclick = async () => {
+  if (scanOn) {
+    scanOn = false;
+    scan?.stop(); scan = null;
+    for (const r of rings.values()) r.device.unwatchAdvertisements?.();
+    for (const d of await bt.getDevices()) d.unwatchAdvertisements?.();
+    $('scan').textContent = 'Scan RSSI';
+    $('scanState').textContent = '';
+    log('scan stopped');
+    return;
+  }
+  scanOn = true;
+  $('scan').textContent = 'Stop scan';
+  if (await startScan()) {
+    $('scanState').innerHTML = '<span class="ok">Scanning all rings.</span>';
+  } else {
+    const devices = await bt.getDevices();
+    for (const d of devices) watch(d);
+    $('scanState').innerHTML = `<span class="err">Full scan not available: only the rings added before
+      (${devices.length}) are measured.</span>`;
+  }
+  // Chrome on Linux: watchAdvertisements() succeeds but no advertisement ever reaches the
+  // page (BlueZ does receive them), tested with Chrome 156
+  const started = performance.now();
+  setTimeout(() => {
+    if (scanOn && ![...seen.values()].some((s) => s.last > started)) {
+      $('scanState').innerHTML += ` <span class="err">No advertisement received after 6 s: this browser
+        doesn't seem to pass them to web pages (the case of Chrome on Linux).</span>`;
+      log('no advertisement received after 6 s');
+    }
+  }, 6000);
+};
+
+// ---- display ---------------------------------------------------------------------
+
+function render() {
+  const now = performance.now();
+  // RSSI table: heard rings by RSSI, then connected rings (no advertising)
+  const connected = [...rings.values()].filter((r) => r.connected);
+  const connectedNames = new Set(connected.map((r) => r.name));
+  for (const [name, s] of seen) if (now - s.last > FORGET_MS) seen.delete(name);
+  // advertising rings (RSSI measured by this computer) and connected rings with a recent
+  // firmware (link RSSI measured by the ring), strongest first
+  const entries = [...seen.entries()].filter(([name]) => !connectedNames.has(name)).map(([name, s]) => {
+    while (s.times.length && now - s.times[0] > 3000) s.times.shift();
+    const stale = now - s.last > STALE_MS;
+    return { name, rssi: s.rssi, last: s.last, stale, advertising: true };
+  });
+  for (const r of connected) {
+    if (r.linkRssi == null) continue;
+    const stale = now - r.linkRssiTime > STALE_MS;
+    entries.push({ name: r.name, rssi: r.linkRssi, last: r.linkRssiTime, stale, ignored: r.droppedRssi || 0,
+      battery: r.battery });
+  }
+  entries.sort((a, b) => (a.stale - b.stale) || byRank(linkRank)(a.name, b.name));
+  const rows = entries.map((e, i) => {
+    const pct = Math.max(2, Math.min(100, (e.rssi + 100) * 100 / 70)); // -100..-30 dBm
+    const ago = (now - e.last) / 1000;
+    return `<tr class="${e.stale ? 'stale' : ''}"><td>${i + 1}</td><td>${esc(e.name)}${e.advertising ?
+      ' <span class="muted">(not connected)</span>' : ''}</td>
+      <td>${e.rssi.toFixed(0)} dBm</td><td class="bar"><div class="meter" style="width:${pct}%"></div></td>
+      <td>${ago < 1 ? 'now' : ago.toFixed(0) + ' s ago'}</td>
+      <td class="muted">${e.ignored == null ? '' : e.ignored}</td>
+      <td title="${e.battery ? esc(e.battery.tip) : ''}">${e.battery ? e.battery.text : '–'}</td></tr>`;
+  });
+  for (const r of connected) {
+    if (r.linkRssi != null) continue;
+    rows.push(`<tr class="stale"><td></td><td>${esc(r.name)}</td><td>–</td><td class="bar"></td><td></td><td></td>
+      <td>older firmware</td></tr>`);
+  }
+  $('rssiRows').innerHTML = rows.join('') ||
+    `<tr><td colspan="7" class="muted">${scanOn ? 'Listening… (no ring heard yet)' : 'Connect rings, or press "Scan RSSI".'}</td></tr>`;
+
+  // Ring cards
+  if (rings.size) {
+    for (const ring of rings.values()) {
+      if (!ring.card) { // built once (rebuilding it would eat clicks on its button)
+        ring.card = document.createElement('div');
+        ring.card.className = 'card';
+        ring.card.innerHTML = `<h3><span></span><span class="btns"><button class="conn"></button>
+          <button class="forget" title="Disconnect, and the browser forgets this ring (no more automatic connection)">Forget</button></span></h3>
+          <div class="st"></div><div class="v rate"></div><div class="v xyz"></div><div class="btn"></div>`;
+        ring.card.querySelector('h3 span').textContent = ring.name;
+        ring.card.querySelector('.conn').onclick = () => ring.connected ? ring.disconnect() : connectRing(ring.device);
+        ring.card.querySelector('.forget').onclick = () => ring.forget();
+        if ($('cards').firstElementChild?.tagName === 'SPAN') $('cards').innerHTML = '';
+        $('cards').appendChild(ring.card);
+      }
+      const q = (sel) => ring.card.querySelector(sel);
+      const b = q('.conn');
+      b.textContent = ring.connected ? 'Disconnect' : 'Connect';
+      b.disabled = ring.status === 'connecting';
+      q('.st').textContent = ring.status;
+      q('.st').className = 'st ' + (ring.connected ? 'ok' : 'muted');
+      q('.rate').textContent = `${ring.rate.toFixed(1)} Hz, ${ring.count} samples`;
+      const [x, y, z] = ring.xyz.map((a) => a.toFixed(2));
+      q('.xyz').textContent = `x ${x}  y ${y}  z ${z} g`;
+      q('.btn').textContent = `button ${ring.button ? 'pressed' : '–'}`;
+    }
+  }
+}
+setInterval(render, 300);
+
+// ---- RSSI charts -----------------------------------------------------------------
+
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// One color per ring name, in order of first appearance (connected or heard), never
+// reassigned. 8 validated colors; further rings share a neutral grey (no generated hues).
+const colorSlots = new Map();
+function ringColor(name) {
+  if (!colorSlots.has(name)) colorSlots.set(name, colorSlots.size);
+  const slot = colorSlots.get(name);
+  return slot < 8 ? css(`--s${slot + 1}`) : css('--muted');
+}
+const fmtDbm = (v) => `${v.toFixed(0)} dBm`;
+const padHistory = (arr) => Array(CHART_SPAN - arr.length).fill(null).concat(arr); // newest right
+
+// Shared vertical scale: at least 20 dB tall, whole 5 dB steps
+function scaleOf(histories) {
+  const values = histories.flatMap((h) => h.filter((v) => v != null));
+  let min = Math.min(...values, -60), max = Math.max(...values, -40);
+  min = Math.floor(min / 5) * 5; max = Math.ceil(max / 5) * 5;
+  if (max - min < 20) min = max - 20;
+  return { min, max };
+}
+
+// A line chart of RSSI series ({ name, history, note }), crosshair + legend on hover
+class RssiChart {
+  constructor(canvas, legend, timeLabel) {
+    this.canvas = canvas; this.legend = legend; this.timeLabel = timeLabel;
+    this.hover = null; this.items = new Map();
+    canvas.addEventListener('pointermove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      this.hover = Math.max(0, Math.min(CHART_SPAN - 1, Math.round(((e.clientX - rect.left) / rect.width) * (CHART_SPAN - 1))));
+      this.draw();
+    });
+    canvas.addEventListener('pointerleave', () => { this.hover = null; this.draw(); });
+  }
+  draw(series = this.series, scale = this.scale) {
+    this.series = series; this.scale = scale;
+    if (!series) return;
+    const { min, max } = scale;
+    const opts = { span: CHART_SPAN, min, max, width: 2, labels: true, format: fmtDbm };
+    if (!series.length) drawSeries(this.canvas, [], css('--muted'), opts);
+    series.forEach((sr, i) => drawSeries(this.canvas, padHistory(sr.history), ringColor(sr.name),
+      { ...opts, overlay: i > 0, labels: i === 0 }));
+    if (this.hover != null) {
+      const { ctx, w, h } = prepareCanvas(this.canvas);
+      const x = Math.round((this.hover / (CHART_SPAN - 1)) * w) + 0.5;
+      ctx.strokeStyle = css('--muted'); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    }
+    if (this.timeLabel) this.timeLabel.textContent = this.hover == null ? '' :
+      `${(-(CHART_SPAN - 1 - this.hover) * CHART_DT / 1000).toFixed(1)} s`;
+    // legend: value under the pointer, else the latest (+ note)
+    if (series.length && this.legend.firstElementChild?.classList.contains('muted')) this.legend.innerHTML = '';
+    series.forEach((sr, i) => {
+      let el = this.items.get(sr.name);
+      if (!el) {
+        el = document.createElement('span');
+        el.innerHTML = '<span class="key"></span><b></b> <span class="val"></span>';
+        el.querySelector('b').textContent = sr.name;
+        this.items.set(sr.name, el);
+      }
+      if (this.legend.children[i] !== el) this.legend.insertBefore(el, this.legend.children[i] || null);
+      el.querySelector('.key').style.background = ringColor(sr.name);
+      const h = padHistory(sr.history);
+      const v = this.hover != null ? h[this.hover] : h[h.length - 1];
+      el.querySelector('.val').textContent = v == null ? '–' : `${v.toFixed(0)} dBm` + (this.hover == null && sr.note ? sr.note : '');
+    });
+  }
+}
+
+const linkChart = new RssiChart($('rssiChart'), $('legend'), $('hoverTime'));
+const peerCharts = new Map(); // measuring ring name -> RssiChart
+
+function peerChartFor(ring) {
+  let chart = peerCharts.get(ring.name);
+  if (!chart) {
+    const box = document.createElement('div');
+    box.className = 'peerchart';
+    box.innerHTML = `<h3><span class="key"></span><span class="t"></span></h3>
+      <div class="chart"><canvas></canvas></div>
+      <div class="axis"><span>−30 s</span><span class="ht"></span><span>now</span></div>
+      <div class="legend"><span class="muted">Nothing heard yet.</span></div>`;
+    box.querySelector('.t').textContent = `heard by ${ring.name}`;
+    box.querySelector('.key').style.background = ringColor(ring.name);
+    if ($('peerCharts').firstElementChild?.tagName === 'SPAN') $('peerCharts').innerHTML = '';
+    $('peerCharts').appendChild(box);
+    chart = new RssiChart(box.querySelector('canvas'), box.querySelector('.legend'), box.querySelector('.ht'));
+    chart.box = box;
+    peerCharts.set(ring.name, chart);
+    $('peerCharts').style.setProperty('--n', peerCharts.size);
+  }
+  return chart;
+}
+
+const fresh = (t, now) => t && now - t < 3000; // a ring isn't heard in every report
+
+// ---- sorting (rows / columns / graphs / legends), recomputed every 2 s ----
+let sortBy = 'name';
+try { sortBy = localStorage.getItem('multiRingSortBy') || 'name'; } catch {}
+$('sortBy').value = sortBy;
+$('sortBy').onchange = () => {
+  sortBy = $('sortBy').value;
+  try { localStorage.setItem('multiRingSortBy', sortBy); } catch {}
+  computeOrder();
+};
+const ringStats = (r) => {
+  const now = performance.now();
+  const peers = [...r.peers.values()].filter((p) => fresh(p.time, now));
+  return {
+    rssi: peers.length ? peers.reduce((a, p) => a + p.avg, 0) / peers.length : r.linkRssi ?? -999,
+    reports: r.reportTimes.length / 3,
+    heard: peers.reduce((a, p) => a + p.rate, 0),
+  };
+};
+let ringRank = new Map();  // ring name -> position
+let linkRank = new Map();  // top table and graph: RSSI to this computer
+const peerRank = new Map(); // measuring ring name -> Map(heard ring name -> position)
+function rankBy(items, key) { // items: [name, stats]; name ascending, else value descending
+  const sorted = [...items].sort((a, b) => sortBy === 'name' ? a[0].localeCompare(b[0])
+    : (key(b[1]) - key(a[1])) || a[0].localeCompare(b[0]));
+  return new Map(sorted.map(([n], i) => [n, i]));
+}
+function computeOrder() {
+  const list = [...rings.values()];
+  ringRank = rankBy(list.map((r) => [r.name, ringStats(r)]), (st) => st[sortBy] ?? 0);
+  const linkItems = [...list.filter((r) => r.linkRssi != null).map((r) => [r.name, r.linkRssi]),
+                     ...[...seen.entries()].map(([n, st]) => [n, st.rssi])];
+  linkRank = sortBy === 'rssi' ? rankBy(linkItems, (v) => v)
+    : new Map([...new Set(linkItems.map(([n]) => n))].sort(byRank(ringRank)).map((n, i) => [n, i]));
+  for (const r of list) {
+    peerRank.set(r.name, rankBy([...r.peers.entries()].map(([n, p]) => [n, p]),
+      (p) => sortBy === 'rssi' ? p.avg : p.rate)); // reports / heard: advertisements heard per s
+  }
+  // "heard by" graphs in the ring order
+  const boxes = [...peerCharts.entries()].sort((a, b) => byRank(ringRank)(a[0], b[0]));
+  for (const [, chart] of boxes) $('peerCharts').appendChild(chart.box);
+}
+const byRank = (rank) => (a, b) => (rank.get(a) ?? 1e9) - (rank.get(b) ?? 1e9) || a.localeCompare(b);
+setInterval(computeOrder, 2000);
+setInterval(() => {
+  const now = performance.now();
+  for (const r of rings.values()) {
+    r.history.push(smooth(r.history.at(-1), r.connected && fresh(r.linkRssiTime, now) ? r.linkRssi : null));
+    if (r.history.length > CHART_SPAN) r.history.shift();
+    for (const p of r.peers.values()) {
+      p.history.push(smooth(p.history.at(-1), r.connected && fresh(p.time, now) ? p.avg : null));
+      if (p.history.length > CHART_SPAN) p.history.shift();
+    }
+  }
+  // link to this computer
+  const linked = [...rings.values()].filter((r) => r.history.some((v) => v != null))
+    .sort((a, b) => byRank(linkRank)(a.name, b.name));
+  linkChart.draw(linked.map((r) => ({ name: r.name, history: r.history })),
+    scaleOf(linked.map((r) => r.history)));
+  // ring to ring: one chart per measuring ring, one shared scale
+  const measuring = [...rings.values()].filter((r) => r.peers.size);
+  const all = measuring.flatMap((r) => [...r.peers.values()].map((p) => p.history));
+  const scale = scaleOf(all);
+  for (const r of measuring) {
+    const series = [...r.peers.entries()].filter(([, p]) => p.history.some((v) => v != null))
+      .sort((a, b) => byRank(peerRank.get(r.name) || new Map())(a[0], b[0]))
+      .map(([name, p]) => ({ name, history: p.history, note: ` (${p.rate.toFixed(1)}/s)` }));
+    peerChartFor(r).draw(series, scale);
+  }
+  renderMatrix(now);
+}, CHART_DT);
+
+// Who hears whom: rows = measuring ring, columns = heard ring, averaged RSSI
+function renderMatrix(now) {
+  const measuring = [...rings.values()].filter((r) => r.connected || r.peers.size)
+    .sort((a, b) => byRank(ringRank)(a.name, b.name));
+  if (!measuring.length) { $('matrix').innerHTML = ''; return; }
+  // columns in the same order as the rows (rings not connected: after them, by name)
+  const heard = [...new Set(measuring.flatMap((r) => [...r.peers.keys()]))].sort(byRank(ringRank));
+  const head = `<tr><th>heard by ↓ / ring →</th>${heard.map((n) =>
+    `<th><span class="key" style="background:${ringColor(n)}"></span>${esc(n.replace('LibRing_', ''))}</th>`).join('')}
+    <th>reports/s</th><th>lost</th><th>errors</th></tr>`;
+  const rows = measuring.map((r) => {
+    const name = `<td><span class="key" style="background:${ringColor(r.name)}"></span>${esc(r.name)}</td>`;
+    if (r.connected && !r.prox && r.status.startsWith('connected')) {
+      return `<tr>${name}<td colspan="${heard.length + 3}" class="err" style="text-align:left">
+        its firmware can't measure the other rings (update it: make flash_all)</td></tr>`;
+    }
+    while (r.reportTimes.length && now - r.reportTimes[0] > 3000) r.reportTimes.shift();
+    return `<tr>${name}${heard.map((n) => {
+      const p = r.peers.get(n);
+      if (n === r.name) return '<td class="muted">–</td>';
+      if (!p || !fresh(p.time, now)) return '<td class="muted">·</td>';
+      return `<td>${p.avg.toFixed(0)} <span class="muted">(${p.rate.toFixed(1)}/s)</span></td>`;
+    }).join('')}<td>${(r.reportTimes.length / 3).toFixed(1)}${r.proxPolling ? ' <span class="muted">(read)</span>' : ''}</td>
+      <td class="${r.lostReports ? 'err' : 'muted'}">${r.lostReports}</td>
+      <td class="${r.proxErrors ? 'err' : 'muted'}">${r.proxErrors ?? '–'}</td></tr>`;
+  });
+  $('matrix').innerHTML = head + rows.join('');
+}
+
+// ---- ring-to-ring measurement (firmware 2026-11-11+, Proximity characteristic) ------
+
+let proxWanted = true; // as soon as each ring is connected
+async function setProx(ring, on) {
+  if (!ring.prox || !ring.connected) return;
+  try {
+    ring.lastSeq = null; // report numbers go on from before: no loss to count across the restart
+    if (on) await ring.prox.startNotifications(); else await ring.prox.stopNotifications();
+    ring.proxOn = on;
+    log(`${ring.name}: ring-to-ring RSSI ${on ? 'on' : 'off'}`);
+    if (!on) ring.proxPolling = false;
+    if (on) {
+      const since = performance.now();
+      setTimeout(() => {
+        if (ring.proxOn && ring.connected && !ring.reportTimes.some((t) => t > since)) ring.pollProx();
+      }, 1500);
+    }
+  } catch (e) { log(`${ring.name}: ring-to-ring RSSI: ${e.message}`); }
+}
+$('prox').onclick = async () => {
+  proxWanted = !proxWanted;
+  $('prox').textContent = proxWanted ? 'Stop ring-to-ring RSSI' : 'Ring-to-ring RSSI';
+  $('prox').classList.toggle('primary', proxWanted);
+  for (const r of rings.values()) await setProx(r, proxWanted);
+  const old = [...rings.values()].filter((r) => r.connected && !r.prox).map((r) => r.name);
+  if (proxWanted && old.length) log(`no ring-to-ring RSSI in the firmware of ${old.join(', ')}`);
+};
+
+// Chrome on Linux: no advertisement reaches the page (see the scan code)
+if (/Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)) {
+  $('scan').textContent = 'Scan RSSI (not on Linux)';
+  $('scan').disabled = true;
+  $('scan').title = "Chrome on Linux doesn't pass the advertisements to web pages";
+}
+if (bt) log(`Web Bluetooth: getDevices ${bt.getDevices ? 'yes' : 'no'}, ` +
+  `scan ${bt.requestLEScan ? 'yes' : 'no'}, watchAdvertisements ${'watchAdvertisements' in BluetoothDevice.prototype ? 'yes' : 'no'}`);
+window.Ring = Ring;
+window.stats = () => ({
+  rssi: [...seen.entries()].map(([n, s]) => [n, Math.round(s.rssi), s.times.length / 3]),
+  rings: [...rings.values()].map((r) => [r.name, r.status, +r.rate.toFixed(1), r.linkRssi == null ? null : Math.round(r.linkRssi)]),
+  peers: Object.fromEntries([...rings.values()].map((r) => [r.name, { errors: r.proxErrors, lost: r.lostReports, read: !!r.proxPolling,
+    reports: +(r.reportTimes.length / 3).toFixed(1),
+    heard: Object.fromEntries([...r.peers.entries()].map(([n, p]) => [n, [Math.round(p.avg), p.rate]])) }])),
+});
+</script>
+</body>
+</html>
