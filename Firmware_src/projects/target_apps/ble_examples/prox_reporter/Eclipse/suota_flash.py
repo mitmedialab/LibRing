@@ -115,7 +115,9 @@ def with_bd_address(image, address):
 
 
 # Our firmware's manufacturer data (src/firmware_version.c): company ID 0xFFFF, commit
-# hash (4 bytes, big-endian), flags (bit 0: uncommitted changes, bit 1: unknown)
+# hash (4 bytes, big-endian), flags (bit 0: uncommitted changes, bit 1: unknown, bit 2:
+# charging), then (firmware of 2026-11-11 or later) battery reading - 200 (0: not yet),
+# and (later builds) the battery percentage estimated by the ring (it learns its range)
 VERSION_COMPANY_ID = 0xFFFF
 
 
@@ -123,17 +125,51 @@ def advertised_version(adv):
     """Commit our firmware was built from (e.g. '446f379', '446f379+' if modified),
     'unknown' if built without git, else None (stock firmware, older builds)."""
     data = adv.manufacturer_data.get(VERSION_COMPANY_ID)
-    if data is None or len(data) != 5:
+    if data is None or len(data) not in (5, 6, 7):
         return None
     if data[4] & 0x02:
         return "unknown"
     return data[:4].hex()[:7] + ("+" if data[4] & 0x01 else "")
 
 
+# Battery reading (P0_1 ADC, battery_adc() in user_proxr.c) -> volts and %, estimated:
+# ~323 when full at rest, scale from that (not calibrated with a voltmeter). Same in the
+# web apps (apps/multi-ring).
+BATTERY_FULL_READING, BATTERY_FULL_VOLTS = 323, 4.15
+LIPO_CURVE = [(4.15, 100), (4.05, 90), (3.95, 78), (3.87, 65), (3.80, 50), (3.75, 40),
+              (3.70, 30), (3.65, 20), (3.60, 12), (3.50, 5), (3.40, 0)]  # resting volts, %
+
+
+def battery_text(reading, charging):
+    volts = reading * BATTERY_FULL_VOLTS / BATTERY_FULL_READING
+    if charging:
+        return f"charging {volts:.2f}V"  # higher than at rest while charging
+    pct = 100 if volts >= LIPO_CURVE[0][0] else 0
+    for (v1, p1), (v0, p0) in zip(LIPO_CURVE, LIPO_CURVE[1:]):
+        if v0 <= volts < v1:
+            pct = p0 + (p1 - p0) * (volts - v0) / (v1 - v0)
+    return f"~{pct:.0f}% {volts:.2f}V"
+
+
+def advertised_battery(adv):
+    """Battery text from our firmware's manufacturer data, else None."""
+    data = adv.manufacturer_data.get(VERSION_COMPANY_ID)
+    if data is None or len(data) not in (6, 7) or data[5] == 0:
+        return None
+    charging = bool(data[4] & 0x04)
+    if len(data) == 7:  # percentage from the ring, which learns its range (flags bits 3-4)
+        learned = (data[4] >> 3) & 0x03
+        return f"{'charging ' if charging else ''}{data[6]}%" + ("" if learned == 0x03 else " (uncal.)")
+    return battery_text(data[5] + 200, charging)
+
+
+battery_by_address = {}
+
+
 def advertised_product_id(adv):
     """Product ID from stock firmware manufacturer data (e.g. ...6F 00010017 00), else None."""
     for company_id, data in adv.manufacturer_data.items():
-        if company_id == VERSION_COMPANY_ID and len(data) == 5:
+        if company_id == VERSION_COMPANY_ID and len(data) in (5, 6, 7):
             continue  # our firmware version, not a product ID
         raw = struct.pack("<H", company_id) + data
         for tail in (raw[-4:], raw[-5:-1]):  # 0001XXXX, optionally followed by 1 byte
@@ -198,17 +234,19 @@ async def scan(args):
         if args.product_id is not None and pid != args.product_id:
             continue
         rings.append((adv.rssi, dev, name, pid, advertised_version(adv)))
+        battery_by_address[dev.address] = advertised_battery(adv)
     rings.sort(key=lambda r: r[0], reverse=True)
     return rings
 
 
 def print_rings(rings):
     width = max(17, *(len(r[1].address) for r in rings))  # macOS: 36-character UUIDs
-    print(f"{'address':{width}s}  {'rssi':>4s}  {'name':12s}  {'product ID':10s}  firmware")
+    print(f"{'address':{width}s}  {'rssi':>4s}  {'name':12s}  {'product ID':10s}  {'firmware':16s}  battery")
     for rssi, dev, name, pid, version in rings:
         pid_str = f"0x{pid:02X}" if pid is not None else "-"
         fw = f"commit {version}" if version else ("stock" if pid is not None else "-")
-        print(f"{dev.address:{width}s}  {rssi:4d}  {name:12s}  {pid_str:10s}  {fw}")
+        print(f"{dev.address:{width}s}  {rssi:4d}  {name:12s}  {pid_str:10s}  {fw:16s}  "
+              f"{battery_by_address.get(dev.address) or '-'}")
 
 
 async def flash(dev, image, args, stock_firmware):
