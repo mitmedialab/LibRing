@@ -50,6 +50,7 @@
 #include "app_bond_db.h"
 #endif // (BLE_APP_SEC)
 #include "user_proxr.h"
+#include "prox/proximity.h"
 
 /*
  * LOCAL VARIABLE DEFINITIONS
@@ -81,12 +82,12 @@ static const struct app_callbacks user_app_callbacks = {
     .app_on_update_params_rejected      = NULL,
     .app_on_update_params_complete      = NULL,
     .app_on_set_dev_config_complete     = default_app_on_set_dev_config_complete,
-    .app_on_adv_nonconn_complete        = NULL,
+    .app_on_adv_nonconn_complete        = prox_on_air_op_complete,
     .app_on_adv_undirect_complete       = app_advertise_complete,
     .app_on_adv_direct_complete         = NULL,
     .app_on_db_init_complete            = user_app_on_db_init_complete,
-    .app_on_scanning_completed          = NULL,
-    .app_on_adv_report_ind              = NULL,
+    .app_on_scanning_completed          = prox_on_air_op_complete,
+    .app_on_adv_report_ind              = prox_on_adv_report,
     .app_on_get_dev_name                = default_app_on_get_dev_name,
     .app_on_get_dev_appearance          = default_app_on_get_dev_appearance,
     .app_on_get_dev_slv_pref_params     = default_app_on_get_dev_slv_pref_params,

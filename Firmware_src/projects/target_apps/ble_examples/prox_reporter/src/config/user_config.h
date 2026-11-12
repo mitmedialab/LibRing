@@ -181,7 +181,7 @@ static const struct advertise_configuration user_adv_conf = {
  */
 /// Advertising data: SUOTA service UUID + firmware version (git commit), defined in
 /// firmware_version.c (the only file rebuilt when the commit changes)
-extern const uint8_t user_adv_data[13];
+extern uint8_t user_adv_data[15];
 #define USER_ADVERTISE_DATA         user_adv_data
 
 /// Advertising data length - maximum 28 bytes, 3 bytes are reserved to set
@@ -223,7 +223,7 @@ extern char user_device_name[];
  */
 static const struct gapm_configuration user_gapm_conf = {
     /// Device Role: Central, Peripheral, Observer, Broadcaster or All roles. (@see enum gap_role)
-    .role = GAP_ROLE_PERIPHERAL,
+    .role = GAP_ROLE_ALL, // peripheral + observer: scanning for the other rings (prox/proximity.c)
 
     /// Maximal MTU. Shall be set to 23 if Legacy Pairing is used, 65 if Secure Connection is used,
     /// more if required by the application

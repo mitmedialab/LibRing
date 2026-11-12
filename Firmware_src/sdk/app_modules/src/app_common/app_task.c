@@ -287,6 +287,11 @@ static int gapc_cmp_evt_handler(ke_msg_id_t const msgid,
         }
         break;
 
+        // LibRing: RSSI requests (user_proxr.c) can fail when the link drops: not an
+        // error worth the ASSERT_ERROR() below (watchdog reset in release builds)
+        case GAPC_GET_CON_RSSI:
+        break;
+
         default:
         {
             if ((param->operation == GAPC_DISCONNECT) && (param->status == GAP_ERR_COMMAND_DISALLOWED))

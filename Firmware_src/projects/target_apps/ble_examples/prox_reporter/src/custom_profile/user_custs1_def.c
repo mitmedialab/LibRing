@@ -72,6 +72,8 @@ static const uint8_t SVC1_BATT_UUID_128[ATT_UUID_128_LEN] = DEF_SVC1_BATT_UUID_1
 
 static const uint8_t SVC1_PPG_UUID_128[ATT_UUID_128_LEN] = DEF_SVC1_PPG_UUID_128;
 
+static const uint8_t SVC1_PROX_UUID_128[ATT_UUID_128_LEN] = DEF_SVC1_PROX_UUID_128;
+
 
 // Attribute specifications
 static const uint16_t att_decl_svc       = ATT_DECL_PRIMARY_SERVICE;
@@ -184,6 +186,24 @@ const struct attm_desc_128 custs1_att_db[CUSTS1_IDX_NB] =
     // PPG Characteristic User Description
     [SVC1_IDX_PPG_USER_DESC]   = {(uint8_t*)&att_desc_user_desc, ATT_UUID_16_LEN, PERM(RD, ENABLE),
                                             sizeof(DEF_SVC1_PPG_USER_DESC) - 1, sizeof(DEF_SVC1_PPG_USER_DESC) - 1, (uint8_t*)DEF_SVC1_PPG_USER_DESC},
+
+    // Proximity Characteristic Declaration
+    [SVC1_IDX_PROX_CHAR]       = {(uint8_t*)&att_decl_char, ATT_UUID_16_LEN, PERM(RD, ENABLE),
+                                            0, 0, NULL},
+
+    // Proximity Characteristic Value
+    [SVC1_IDX_PROX_VAL]        = {SVC1_PROX_UUID_128, ATT_UUID_128_LEN, PERM(RD, ENABLE) | PERM(NTF, ENABLE),
+                                            DEF_SVC1_PROX_CHAR_LEN, 0, NULL},
+
+    // Proximity Characteristic NTF CCCD
+    [SVC1_IDX_PROX_NTF_CFG]    = {(uint8_t*)&att_desc_cfg, ATT_UUID_16_LEN, PERM(RD, ENABLE) | PERM(WR, ENABLE) | PERM(WRITE_REQ, ENABLE),
+                                       sizeof(uint16_t),
+                                       0,
+                                       NULL},
+
+    // Proximity Characteristic User Description
+    [SVC1_IDX_PROX_USER_DESC]  = {(uint8_t*)&att_desc_user_desc, ATT_UUID_16_LEN, PERM(RD, ENABLE),
+                                            sizeof(DEF_SVC1_PROX_USER_DESC) - 1, sizeof(DEF_SVC1_PROX_USER_DESC) - 1, (uint8_t*)DEF_SVC1_PROX_USER_DESC},
 };
 
 /// @} USER_CONFIG

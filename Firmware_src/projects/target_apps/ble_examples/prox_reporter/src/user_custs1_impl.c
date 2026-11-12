@@ -40,6 +40,7 @@
  ****************************************************************************************
  */
 
+#include "prox/proximity.h"
 #include "user_custs1_impl.h"
 #include "user_custs1_def.h"
 #include "user_proxr.h"
@@ -89,10 +90,33 @@ void user_custs1_wr_ind_handler(ke_msg_id_t const msgid,
 	{
 		user_ppg_streaming(param->value[0] & PRF_CLI_START_NTF);
 	}
+	else if (param->handle == SVC1_IDX_PROX_NTF_CFG)
+	{
+		prox_enable(param->value[0] & PRF_CLI_START_NTF);
+	}
 	else if (param->handle == SVC1_IDX_PPG_VAL)
 	{
 		user_ppg_config(param->value, param->length);
 	}
+}
+
+// Value of the battery characteristic (update_battery() in user_proxr.c)
+void set_batt_value(const uint8_t *data, uint16_t len)
+{
+    if (PRF_ENV_GET(CUSTS1, custs1) == NULL || ke_state_get(TASK_ID_CUSTS1) == CUSTS1_BUSY) {
+        return;
+    }
+    struct custs1_val_set_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_SET_REQ,
+                                                      prf_get_task_from_id(TASK_ID_CUSTS1),
+                                                      TASK_APP, custs1_val_set_req, len);
+    if (req == NULL) {
+        return;
+    }
+    req->conidx = 0;
+    req->handle = SVC1_IDX_BATT_VAL;
+    req->length = len;
+    memcpy(req->value, data, len);
+    ke_msg_send(req);
 }
 
 // Value of the PPG characteristic, without notification (read by the client)
@@ -160,7 +184,7 @@ uint8_t update_accel_data(const accel_sensitivity_t* sens, const accel_data_t *a
     }
     
     // Prepare data buffer (6 bytes)
-    uint8_t data_buffer[7];
+    uint8_t data_buffer[DEF_SVC1_ACCEL_CHAR_LEN];
     
     if (accel_data != NULL) {
         // Pack real accelerometer data (big-endian format)
@@ -185,6 +209,7 @@ uint8_t update_accel_data(const accel_sensitivity_t* sens, const accel_data_t *a
     } else {
         data_buffer[6] = 0x07; 
     }
+    data_buffer[7] = (uint8_t)user_con_rssi; // RSSI of the link, measured by the ring
     
     // Use message-based approach
     struct custs1_val_set_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_SET_REQ,
@@ -227,7 +252,7 @@ uint8_t notify_accel_data(const accel_sensitivity_t* sens, const accel_data_t *a
 
 
     // Prepare data buffer (6 bytes)
-    uint8_t data_buffer[7];
+    uint8_t data_buffer[DEF_SVC1_ACCEL_CHAR_LEN];
     
     if (accel_data != NULL) {
         // Pack real accelerometer data (big-endian format)
@@ -252,6 +277,7 @@ uint8_t notify_accel_data(const accel_sensitivity_t* sens, const accel_data_t *a
     } else {
         data_buffer[6] = 0x07; 
     }
+    data_buffer[7] = (uint8_t)user_con_rssi; // RSSI of the link, measured by the ring
 
     // Use message-based approach
     struct custs1_val_ntf_ind_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_NTF_REQ,
@@ -380,7 +406,7 @@ void update_batt_data(uint32_t batt) {
                                                        prf_get_task_from_id(TASK_ID_CUSTS1),
                                                        TASK_APP,
                                                        custs1_val_set_req,
-                                                       DEF_SVC1_BATT_CHAR_LEN);
+                                                       sizeof(data_buf));
     
     if (req == NULL) {
         return;
@@ -389,10 +415,10 @@ void update_batt_data(uint32_t batt) {
     // Set the message parameters
     req->conidx = 0;
     req->handle = SVC1_IDX_BATT_VAL;
-    req->length = DEF_SVC1_BATT_CHAR_LEN;
+    req->length = sizeof(data_buf);
     
     // Copy data to message
-    memcpy(req->value, data_buf, DEF_SVC1_BATT_CHAR_LEN);
+    memcpy(req->value, data_buf, sizeof(data_buf));
     
     // Send the message
     ke_msg_send(req);
@@ -422,7 +448,7 @@ void notify_batt_data(uint32_t batt) {
                                                             prf_get_task_from_id(TASK_ID_CUSTS1),
                                                             TASK_APP,
                                                             custs1_val_ntf_ind_req,
-                                                            DEF_SVC1_BATT_CHAR_LEN);
+                                                            sizeof(data_buf));
 
     if (req == NULL) {
         return; // Allocation failed - heap might be full
@@ -430,10 +456,10 @@ void notify_batt_data(uint32_t batt) {
 
     req->conidx = 0; // Connection index (0 for first connection)
     req->handle = SVC1_IDX_BATT_VAL;
-    req->length = DEF_SVC1_BATT_CHAR_LEN;
+    req->length = sizeof(data_buf);
     req->notification = true;
 
-    memcpy(req->value, data_buf, DEF_SVC1_BATT_CHAR_LEN);
+    memcpy(req->value, data_buf, sizeof(data_buf));
 
     ke_msg_send(req);
 }

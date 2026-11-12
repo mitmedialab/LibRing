@@ -14,13 +14,18 @@
 #endif
 
 // USER_ADVERTISE_DATA (user_config.h). The ROM adds the flags (3 bytes) and the SDK
-// appends the device name (12 bytes) if it fits: 3 + 13 + 12 <= 31.
-const uint8_t user_adv_data[13] = {
+// appends the device name (12 bytes) if it fits: 3 + 15 + 12 <= 31.
+// Not const: user_proxr.c updates the battery (update_battery()).
+uint8_t user_adv_data[15] = {
     // Complete list of 16-bit service UUIDs: SUOTA (0xFEF5)
     0x03, 0x03, 0xF5, 0xFE,
     // Manufacturer specific data, company ID 0xFFFF (no company, for tests):
-    // commit hash (4 bytes, big-endian), flags (bit 0: modified, bit 1: unknown)
-    0x08, 0xFF, 0xFF, 0xFF,
+    // commit hash (4 bytes, big-endian), flags (bit 0: modified, bit 1: unknown,
+    // bit 2: charging, bits 3-4: battery offset / full learned), battery: raw reading - 200
+    // (0: not measured yet), percentage
+    // (estimated by the ring, update_battery() in user_proxr.c)
+    0x0A, 0xFF, 0xFF, 0xFF,
     (GIT_HASH >> 24) & 0xFF, (GIT_HASH >> 16) & 0xFF, (GIT_HASH >> 8) & 0xFF, GIT_HASH & 0xFF,
     GIT_FLAGS,
+    0x00, 0x00,
 };

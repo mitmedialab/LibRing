@@ -55,6 +55,9 @@ void user_custs1_wr_ind_handler(ke_msg_id_t const msgid,
  * @param[in] accel_data Pointer to accelerometer data structure (can be NULL for test data)
  ****************************************************************************************
  */
+/// RSSI of the connection (dBm) as measured by the ring, 127 when unknown (user_proxr.c)
+extern int8_t user_con_rssi;
+
 uint8_t update_accel_data(const accel_sensitivity_t* sens, const accel_data_t *accel_data);
 
 /**
@@ -73,6 +76,7 @@ void set_ppg_value(const uint8_t *data, uint16_t len);
 void notify_btn_data(uint8_t btn_pressed); 
 
 void update_batt_data(uint32_t batt); 
+void set_batt_value(const uint8_t *data, uint16_t len);
 void notify_batt_data(uint32_t batt); 
 
 #endif

@@ -111,7 +111,10 @@
 /****************************************************************************************************************/
 /* Custom heap sizes                                                                                            */
 /****************************************************************************************************************/
-// #define DB_HEAP_SZ              1024
+// Attribute database: the custom service (with the PPG and proximity characteristics)
+// outgrew the default 1024 bytes, which then spilled into the message heap and broke
+// SUOTA with 240-byte writes (2026-11-11)
+#define DB_HEAP_SZ              2048
 // #define ENV_HEAP_SZ             4928
 // #define MSG_HEAP_SZ             6880
 // #define NON_RET_HEAP_SZ         2048

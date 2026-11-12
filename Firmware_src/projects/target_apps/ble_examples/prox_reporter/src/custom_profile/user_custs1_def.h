@@ -65,7 +65,7 @@
 
 #define DEF_SVC1_ACCEL_UUID_128       {0xCC, 0x65, 0x9F, 0xC1, 0x38, 0x8B, 0x10, 0x4C, 0xA2, 0x8D, 0xE5, 0x4C, 0x65, 0x91, 0x90, 0xF2}
 
-#define DEF_SVC1_ACCEL_CHAR_LEN       7
+#define DEF_SVC1_ACCEL_CHAR_LEN       8 // x, y, z (big-endian), range, link RSSI (dBm, 127: unknown)
 
 #define DEF_SVC1_ACCEL_USER_DESC      "Accelerometer Data"
 
@@ -77,7 +77,7 @@
 
 #define DEF_SVC1_BATT_UUID_128      {0x8a, 0x67, 0x3e, 0x35, 0xc0, 0x08, 0x48, 0x70, 0x8a, 0x0d, 0x06, 0x80, 0xc3, 0x75, 0x51, 0xe1}
 
-#define DEF_SVC1_BATT_CHAR_LEN       4
+#define DEF_SVC1_BATT_CHAR_LEN       8 // update_battery() in user_proxr.c
 
 #define DEF_SVC1_BATT_USER_DESC     "Battery level"
 
@@ -88,6 +88,14 @@
 #define DEF_SVC1_PPG_CHAR_LEN       83 // PPG_PACKET_MAX
 
 #define DEF_SVC1_PPG_USER_DESC      "PPG Data"
+
+// Proximity: RSSI of the other rings, measured while notifications are on
+// (src/prox/proximity.c, report format in proximity.h)
+#define DEF_SVC1_PROX_UUID_128      {0xF6, 0x21, 0x75, 0x52, 0x7D, 0xE6, 0x5E, 0x9B, 0xE0, 0x40, 0x83, 0xCA, 0xB2, 0x65, 0x91, 0x24}
+
+#define DEF_SVC1_PROX_CHAR_LEN      51 // PROX_REPORT_LEN
+
+#define DEF_SVC1_PROX_USER_DESC     "Proximity"
 
 
 /// Custom1 Service Data Base Characteristic enum
@@ -119,6 +127,11 @@ enum
     SVC1_IDX_PPG_VAL,
     SVC1_IDX_PPG_NTF_CFG,
     SVC1_IDX_PPG_USER_DESC,
+
+    SVC1_IDX_PROX_CHAR,
+    SVC1_IDX_PROX_VAL,
+    SVC1_IDX_PROX_NTF_CFG,
+    SVC1_IDX_PROX_USER_DESC,
 
     CUSTS1_IDX_NB
 };

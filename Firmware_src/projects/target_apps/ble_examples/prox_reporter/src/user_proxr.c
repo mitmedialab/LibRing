@@ -35,6 +35,7 @@
 
 #include "fluid/fluid_5x25.h"
 #include "ppg/HX3918.h"
+#include "prox/proximity.h"
 
 #include "battery.h"
 
@@ -382,7 +383,29 @@ static void timer_cb(void)
 
 void start_main_timer(void);
 
+int8_t user_con_rssi = 127;
+
+// Asks the stack for the RSSI of the connection (answer: GAPC_CON_RSSI_IND in
+// user_catch_rest_hndl). An error completion is ignored in app_task.c (GAPC_GET_CON_RSSI).
+static void request_con_rssi(void) {
+    if (!app_env[0].connection_active) {
+        return;
+    }
+    struct gapc_get_info_cmd *cmd = KE_MSG_ALLOC(GAPC_GET_INFO_CMD,
+                                                 KE_BUILD_ID(TASK_GAPC, app_env[0].conidx),
+                                                 TASK_APP, gapc_get_info_cmd);
+    cmd->operation = GAPC_GET_CON_RSSI;
+    KE_MSG_SEND(cmd);
+}
+
 static void read_and_notify_accel(void) {
+    // link RSSI every 3rd sample (~4 Hz), sent with the following samples
+    static uint8_t rssi_div;
+    if (++rssi_div >= 3) {
+        rssi_div = 0;
+        request_con_rssi();
+    }
+
     accel_data_t data;
     if (!accel_cmd_readaccel(&data)) {
         // the I2C setup was lost (e.g. peripherals powered down by sleep):
@@ -605,6 +628,119 @@ static void ppg_poll(void) {
 }
 // ---- end PPG streaming ----
 
+// Battery, every 10 s (main timer): raw reading (battery_adc(), P0_1) and charging pin
+// (P0_7 low), and a percentage estimated by the ring, which learns its own range:
+// - charge_offset: how much the charging current raises the reading, measured 30 s after
+//   each plug-in / removal (or end of charge) against the last reading before it;
+// - full_reading: the resting reading 30 s after a charge that reached the plateau
+//   (update_charging()), instead of the default 323.
+// Learned values are kept in RAM (a reset or a flash starts again from the defaults).
+// The percentage maps the reading (minus the offset while charging) to volts, full_reading
+// = 4.15 V, then a LiPo curve. While charging: at most 99 % until the plateau.
+// Battery characteristic (8 bytes): reading (big-endian), charging, 0x02 (this format),
+// percentage, full_reading - 200, charge_offset, learned (bit 0: offset, bit 1: full).
+// Advertising data: user_adv_data[12] bit 2 = charging, bits 3-4 = learned (as above),
+// [13] = reading - 200, [14] = %.
+static bool charge_full;                // charge plateau reached (update_charging())
+static uint16_t full_reading = 323;
+static uint8_t charge_offset = 20;      // ring C7: 311 off the charger, 331 on it
+static uint8_t battery_learned;
+
+static uint8_t battery_percent(uint16_t reading, bool charging)
+{
+    static const uint16_t curve_mv[] = {4150, 4050, 3950, 3870, 3800, 3750, 3700, 3650, 3600, 3500, 3400};
+    static const uint8_t curve_pct[] = { 100,   90,   78,   65,   50,   40,   30,   20,   12,    5,    0};
+    int32_t r = (int32_t)reading - (charging ? charge_offset : 0);
+    int32_t mv = r * 4150 / full_reading;
+    uint8_t pct = 0;
+    if (mv >= curve_mv[0]) {
+        pct = 100;
+    } else {
+        for (uint8_t i = 0; i + 1 < sizeof(curve_mv) / sizeof(curve_mv[0]); i++) {
+            if (mv >= curve_mv[i + 1]) {
+                pct = curve_pct[i + 1] + (uint8_t)((curve_pct[i] - curve_pct[i + 1]) *
+                      (mv - curve_mv[i + 1]) / (curve_mv[i] - curve_mv[i + 1]));
+                break;
+            }
+        }
+    }
+    if (charging) {
+        pct = charge_full ? 100 : (pct > 99 ? 99 : pct);
+    }
+    return pct;
+}
+
+static void update_battery(void)
+{
+    static uint8_t ticks;
+    static bool was_charging, full_at_change;
+    static uint16_t reading_before;   // last reading before the last change
+    static uint16_t last_reading;
+    static uint8_t since_change = 255; // 10 s steps since the charging pin changed
+    if (ticks++ != 0) {
+        if (ticks >= 100) {
+            ticks = 0;
+        }
+        return;
+    }
+    uint16_t adc = battery_adc();
+    bool charging = !GPIO_GetPinStatus(GPIO_PORT_0, GPIO_PIN_7);
+
+    // learning
+    if (last_reading != 0 && charging != was_charging) {
+        reading_before = last_reading;
+        full_at_change = charge_full;   // the plateau, before the end of the charge
+        since_change = 0;
+    } else if (since_change < 255) {
+        since_change++;
+    }
+    if (since_change == 3) { // 30 s after the change: settled
+        int16_t delta = charging ? (int16_t)(adc - reading_before) : (int16_t)(reading_before - adc);
+        if (delta >= 3 && delta <= 60) {
+            charge_offset = (battery_learned & 0x01) ? (uint8_t)((charge_offset * 3 + delta + 2) / 4)
+                                                     : (uint8_t)delta;
+            battery_learned |= 0x01;
+        }
+        if (!charging && full_at_change && adc > 250 && adc < 400) {
+            full_reading = (battery_learned & 0x02) ? (uint16_t)((full_reading * 3 + adc + 2) / 4) : adc;
+            battery_learned |= 0x02;
+        }
+    }
+    if (!charging) {
+        charge_full = false;
+    }
+    was_charging = charging;
+    last_reading = adc;
+
+    uint8_t pct = battery_percent(adc, charging);
+#if (BLE_CUSTOM1_SERVER)
+    uint8_t value[8] = { // DEF_SVC1_BATT_CHAR_LEN
+        adc >> 8, adc & 0xFF, charging, 0x02, pct,
+        (uint8_t)(full_reading > 200 ? full_reading - 200 : 0), charge_offset, battery_learned,
+    };
+    set_batt_value(value, sizeof(value));
+#endif
+    uint8_t level = adc <= 200 ? 1 : adc >= 455 ? 255 : (uint8_t)(adc - 200);
+    // flags: bit 2 charging, bits 3-4 charging offset / full reading learned
+    uint8_t flags = (user_adv_data[12] & ~0x1C) | (charging ? 0x04 : 0x00) | (uint8_t)(battery_learned << 3);
+    if (level == user_adv_data[13] && flags == user_adv_data[12] && pct == user_adv_data[14]) {
+        return;
+    }
+    user_adv_data[12] = flags;
+    user_adv_data[13] = level;
+    user_adv_data[14] = pct;
+    // Advertising in progress: update it (else the next start uses user_adv_data). Same
+    // content as at the start: our data, then the name (the ROM adds the flags).
+    if (ke_state_get(TASK_APP) == APP_CONNECTABLE) {
+        uint8_t buf[sizeof(user_adv_data) + 2 + USER_DEVICE_NAME_LEN];
+        memcpy(buf, user_adv_data, sizeof(user_adv_data));
+        buf[sizeof(user_adv_data)] = USER_DEVICE_NAME_LEN + 1;
+        buf[sizeof(user_adv_data) + 1] = GAP_AD_TYPE_COMPLETE_NAME;
+        memcpy(&buf[sizeof(user_adv_data) + 2], USER_DEVICE_NAME, USER_DEVICE_NAME_LEN);
+        app_easy_gap_update_adv_data(buf, sizeof(buf), NULL, 0);
+    }
+}
+
 // Charge indicators, every 100 ms (main timer), while the charger charges (P0_7 low):
 // red heart, then green steps once the battery reading stops rising (the charger's
 // constant-voltage phase, ~80-90 %: "full", as generous as the stock firmware's 100 %).
@@ -632,6 +768,7 @@ static void update_charging(void)
                 flat_s = 0;
             } else if (++flat_s >= CHARGE_PLATEAU_S) {
                 full = true;
+                charge_full = true; // update_battery(): 100 %, and learns the full reading
             }
         }
         LED_charge_indicators = full ? LED_IND_STEPS : LED_IND_HEART;
@@ -657,6 +794,7 @@ static void main_timer_cb(void) {
         return;
     }
     update_charging();
+    update_battery();
 
     if (accel_streaming) {
         read_and_notify_accel();
@@ -1125,6 +1263,7 @@ void on_suotar_status_change(const uint8_t suotar_event)
 {
     if (suotar_event == SUOTAR_START) {
         user_ppg_streaming(false); // before suota_active (ppg_stop() uses the I2C)
+        prox_enable(false);        // radio for the update only
         suota_active = true;
         LED_GPIO_mode(0);
         arch_force_active_mode(); // stay awake during the update (keeps the I2C setup)
@@ -1155,7 +1294,11 @@ void on_suotar_status_change(const uint8_t suotar_event)
 void user_app_on_disconnect(struct gapc_disconnect_ind const *param)
 {
     arch_printf("BLE Disconnected\r\n");
-    default_app_on_disconnect(NULL);
+    // Advertising restarts when the proximity air operation (if any) has ended
+    if (!prox_on_disconnect()) {
+        default_app_on_disconnect(NULL);
+    }
+    user_con_rssi = 127;
 
     user_accel_streaming(false);
     user_ppg_streaming(false);
@@ -1189,8 +1332,24 @@ void user_app_on_connect(uint8_t conidx, struct gapc_connection_req_ind const *p
     arch_printf("BLE Connected\r\n");
 }
 
+// Advertising that couldn't start (refused by the stack): try again later, so that the
+// ring never stays unreachable
+static void adv_retry_cb(void)
+{
+    if (ke_state_get(TASK_APP) != APP_CONNECTED) {
+        default_advertise_operation();
+    }
+}
+
 void app_advertise_complete(const uint8_t status)
 {
+    if ((status != GAP_ERR_NO_ERROR) && (status != GAP_ERR_CANCELED))
+    {
+        arch_printf("Advertising failed: 0x%02x, retrying\r\n", status);
+        app_easy_timer(20, adv_retry_cb); // 200 ms
+        return;
+    }
+
     if ((status == GAP_ERR_NO_ERROR) || (status == GAP_ERR_CANCELED))
     {
 
@@ -1217,6 +1376,11 @@ void user_catch_rest_hndl(ke_msg_id_t const msgid,
             struct gattc_event_cfm *cfm = KE_MSG_ALLOC(GATTC_EVENT_CFM, src_id, dest_id, gattc_event_cfm);
             cfm->handle = ind->handle;
             KE_MSG_SEND(cfm);
+        } break;
+
+        case GAPC_CON_RSSI_IND:
+        {
+            user_con_rssi = (int8_t)((struct gapc_con_rssi_ind const *)param)->rssi;
         } break;
 
         #if (BLE_CUSTOM1_SERVER)
