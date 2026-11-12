@@ -91,7 +91,7 @@ cd Firmware_src/projects/target_apps/ble_examples/prox_reporter
 make                  # or: make PRODUCT_ID=17
 ```
 
-Flash it from the computer over BLE (Linux only for now, needs `pip install bleak`):
+Flash it from the computer over BLE (Linux or macOS, needs `pip install bleak`):
 
 ```sh
 make scan                                       # nearby rings, strongest signal first, with their firmware
@@ -106,6 +106,7 @@ make flash_all FLASH_ARGS="--min-rssi -60"      # only the rings close to the co
 - Stock rings show their product ID in `make scan` and are skipped if it doesn't match the build.
 - Each ring keeps its BLE address: `make flash` writes the address the ring advertises (the factory one for a stock ring) into the image, except the addresses the firmware derives itself (`48:23:35:XX:YY:ZZ`). `--set-address AA:BB:...` gives one ring a specific address.
 - A ring connected to another app (e.g. a web demo) stops advertising: disconnect it first.
+- macOS hides BLE addresses (rings show as UUIDs), so a ring's address can't be kept: it gets one derived from its flash chip (`48:23:35:XX:YY:ZZ`), as with a plain `output.bin` in the Android app. Rings already on that address (most rings running this firmware) keep it and their name. To flash a release binary without building: `python3 Eclipse/suota_flash.py LibRing_xxxxxxx_0x4C_2026_rings.bin --ring LibRing_C7`.
 - More options (`--name`, `--product-id`, `--raw`, `--retries`, `--chunk`...): `python3 Eclipse/suota_flash.py --help`.
 
 Or upload with the Dialog [SUOTA app](https://play.google.com/store/apps/details?id=com.dialog.suota), using the settings in `docs/OTA_Settings_for_apk.jpg`. To keep each ring's BLE address, upload its own image, made by `make images` (rings in range) or `make images FLASH_ARGS="--set-address AA:BB:..."`: `output_<ADDRESS>.bin`. With a plain `output.bin`, the firmware gives each ring an address made from the unique ID of its SPI flash chip (`48:23:35:XX:YY:ZZ`); if the flash chip has none, the ring keeps the shared default address `48:23:35:F4:00:10` and gets a random name at each boot.
@@ -121,6 +122,7 @@ Other keeprapid ring/band models use other product IDs, mostly on a different MC
   sudo systemctl restart bluetooth
   ```
 - **After flashing, `make scan` still shows the old firmware**: BlueZ caches the advertising data, `bluetoothctl remove <address>` clears it.
+- **macOS: the script stops right after "Scanning..." (exit code 134)**: macOS killed it because the app running the terminal has no Bluetooth permission. Run it from Terminal or iTerm and allow Bluetooth when asked (System Settings > Privacy & Security > Bluetooth); terminals embedded in some apps can't get it.
 - **Web apps, Chrome on Linux**: after a disconnection, Chrome stops delivering the ring's notifications to the page until it is reloaded. The accelerometer apps detect it and read the values instead (same rate); other pages need a reload to reconnect.
 
 ## Hardware notes

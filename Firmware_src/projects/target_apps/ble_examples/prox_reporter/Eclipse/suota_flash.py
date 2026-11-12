@@ -25,6 +25,15 @@ instead of flashing, e.g. for the Android SUOTA app:
   suota_flash.py output.bin --save --all                        every ring in range
   suota_flash.py output.bin --save --set-address 02:05:5E:94:54:36   no scan needed
 
+macOS: CoreBluetooth hides BLE addresses (each ring shows as a UUID, which --address
+also accepts), so the ring's address can't be kept: the image keeps the default one and
+the firmware derives an address from the flash unique ID (48:23:35:XX:YY:ZZ), as with a
+plain output.bin in the Android app. A ring that had its factory address gets a new one
+(and a new LibRing_XX name). --set-address still gives a ring a specific address.
+The terminal app needs the Bluetooth permission (System Settings > Privacy & Security >
+Bluetooth, asked at the first scan): Terminal or iTerm work, a terminal embedded in an
+app without it (some IDEs) gets the script killed by macOS (abort, exit code 134).
+
 If connections keep dropping, raising Linux's default BLE supervision timeout (420 ms)
 may help (units of 10 ms), then restart Bluetooth:
   sudo sed -i 's/^#ConnectionSupervisionTimeout=$/ConnectionSupervisionTimeout=400/' /etc/bluetooth/main.conf
@@ -80,9 +89,14 @@ DEFAULT_BD_ADDR_COPIES = 2
 DERIVED_BD_ADDR_PREFIX = "48:23:35:"
 
 
+def is_bd_address(address):
+    """True for "AA:BB:CC:DD:EE:FF", False for the UUIDs macOS gives instead."""
+    return re.fullmatch(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", address) is not None
+
+
 def with_bd_address(image, address):
     """Image with the default BLE address replaced by address ("AA:BB:CC:DD:EE:FF")."""
-    if not re.fullmatch(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", address):
+    if not is_bd_address(address):
         raise ValueError(f"not a BLE address: {address}")
     new = bytes.fromhex(address.replace(":", ""))[::-1]
     code_size = struct.unpack_from("<I", image, 33)[0]
@@ -189,11 +203,12 @@ async def scan(args):
 
 
 def print_rings(rings):
-    print(f"{'address':17s}  {'rssi':>4s}  {'name':12s}  {'product ID':10s}  firmware")
+    width = max(17, *(len(r[1].address) for r in rings))  # macOS: 36-character UUIDs
+    print(f"{'address':{width}s}  {'rssi':>4s}  {'name':12s}  {'product ID':10s}  firmware")
     for rssi, dev, name, pid, version in rings:
         pid_str = f"0x{pid:02X}" if pid is not None else "-"
         fw = f"commit {version}" if version else ("stock" if pid is not None else "-")
-        print(f"{dev.address:17s}  {rssi:4d}  {name:12s}  {pid_str:10s}  {fw}")
+        print(f"{dev.address:{width}s}  {rssi:4d}  {name:12s}  {pid_str:10s}  {fw}")
 
 
 async def flash(dev, image, args, stock_firmware):
@@ -349,9 +364,16 @@ async def main():
             failed.append(dev.address)
             continue
         # Keep the ring's BLE address (or set the requested one), unless the firmware
-        # derives it: then keep the default one in the image
+        # derives it: then keep the default one in the image. Same when the address is
+        # unknown (macOS): the firmware then derives one.
         address = (args.set_address or dev.address).upper()
-        if not args.set_address and address.startswith(DERIVED_BD_ADDR_PREFIX):
+        hidden_address = not args.set_address and not is_bd_address(address)
+        if hidden_address and args.save and not args.raw:
+            print("  skipped: --save needs the ring's BLE address, hidden on macOS"
+                  " (give one with --set-address)")
+            failed.append(dev.address)
+            continue
+        if not args.set_address and (hidden_address or address.startswith(DERIVED_BD_ADDR_PREFIX)):
             address = DEFAULT_BD_ADDR[::-1].hex(":").upper()
         try:
             ring_image = image if args.raw else with_bd_address(image, address)
@@ -364,6 +386,9 @@ async def main():
             continue
         if args.raw:
             print("  image flashed unchanged (--raw)")
+        elif hidden_address:
+            print("  BLE address after flashing: derived by the firmware (48:23:35:XX:YY:ZZ);"
+                  " macOS hides the current one, so it can't be kept")
         elif address.startswith(DERIVED_BD_ADDR_PREFIX):
             print("  BLE address after flashing: derived by the firmware (48:23:35:XX:YY:ZZ)")
         else:
