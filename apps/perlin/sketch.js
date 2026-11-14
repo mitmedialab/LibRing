@@ -28,13 +28,17 @@
  * space               : new noise seed
  * backspace           : clear screen
  * s                   : save png
+ * f, double-click     : full screen on / off
+ *
+ * The canvas fills the window (resized with it), with ~1 agent per 800 pixels.
  */
 
 'use strict';
 
 var sketch = function (p) {
     var agents = [];
-    var agentCount = 3000;
+    var agentCount = 0;           // follows the window area (setAgentCount())
+    var AGENTS_PER_PIXEL = 3000 / (2000 * 1200); // the original density (3000 on 2000x1200)
     var noiseScale = 150;
     var noiseStrength = 6;
     var overlayAlpha = 10;
@@ -47,14 +51,17 @@ var sketch = function (p) {
     var accel = { x: 0, y: 0, z: 0, timestamp: '' };
     var isBleConnected = false;
 
+    // As many agents as the window area needs (300-6000): new ones are added at random
+    // places, extra ones removed
+    function setAgentCount() {
+        agentCount = Math.round(Math.min(6000, Math.max(300, p.width * p.height * AGENTS_PER_PIXEL)));
+        while (agents.length < agentCount) agents.push(new Agent());
+        agents.length = agentCount;
+    }
+
     p.setup = function () {
-        p.fullscreen(true);
-
-        p.createCanvas(2000, 1200);
-
-        for (var i = 0; i < agentCount; i++) {
-            agents[i] = new Agent();
-        }
+        p.createCanvas(p.windowWidth, p.windowHeight);
+        setAgentCount();
 
         // Only fetch accelerometer data here — do not change agent update behavior.
         if (window.BLE) {
@@ -104,7 +111,7 @@ var sketch = function (p) {
         // Tiny on-canvas status (optional)
         p.noStroke();
         p.fill(0, 140);
-        p.rect(20, 20, 420, 62);
+        p.rect(20, 20, Math.min(420, p.width - 40), 62);
         p.fill(255);
         p.textSize(14);
         p.text(isBleConnected ? 'BLE connected' : 'Click to connect BLE', 30, 45);
@@ -120,6 +127,17 @@ var sketch = function (p) {
             30,
             65,
         );
+    };
+
+    // Window resized (computer) or rotated (phone): the canvas follows; agents now outside
+    // come back at random places by themselves (Agent.update)
+    p.windowResized = function () {
+        p.resizeCanvas(p.windowWidth, p.windowHeight);
+        setAgentCount();
+    };
+
+    p.doubleClicked = function () {
+        p.fullscreen(!p.fullscreen());
     };
 
     // Web Bluetooth requires a user gesture to choose a ring (not for the last one: below)
@@ -139,6 +157,7 @@ var sketch = function (p) {
 
     p.keyReleased = function () {
         if (p.key == 's' || p.key == 'S') p.saveCanvas(gd.timestamp(), 'png');
+        if (p.key == 'f' || p.key == 'F') p.fullscreen(!p.fullscreen());
         if (p.key == '1') drawMode = 1;
         if (p.key == '2') drawMode = 2;
         if (p.key == ' ') {
