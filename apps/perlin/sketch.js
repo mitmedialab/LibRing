@@ -39,6 +39,8 @@ var sketch = function (p) {
     var agents = [];
     var agentCount = 0;           // follows the window area (setAgentCount())
     var AGENTS_PER_PIXEL = 3000 / (2000 * 1200); // the original density (3000 on 2000x1200)
+    var segments = []; // per stroke-width group (Agent.js): x0, y0, x1, y1, ... of this frame
+    for (var g = 0; g < STROKE_GROUPS; g++) segments[g] = [];
     var noiseScale = 150;
     var noiseStrength = 6;
     var overlayAlpha = 10;
@@ -102,10 +104,24 @@ var sketch = function (p) {
 
         // angle *= p.noise(p.frameCount / 300); // add a touch of randomness (kept from original)
 
+        for (var g = 0; g < STROKE_GROUPS; g++) segments[g].length = 0;
         for (var i = 0; i < agentCount; i++) {
             if (drawMode == 1) {
-                agents[i].update1(noiseScale, noiseStrength, strokeWidth, angle);
-            } else agents[i].update2(noiseScale, noiseStrength, strokeWidth);
+                agents[i].update1(noiseScale, noiseStrength, segments, angle);
+            } else agents[i].update2(noiseScale, noiseStrength, segments);
+        }
+        // one path per stroke width: a canvas call per group instead of one per agent
+        var ctx = p.drawingContext;
+        for (var g = 0; g < STROKE_GROUPS; g++) {
+            var seg = segments[g];
+            if (!seg.length) continue;
+            ctx.lineWidth = strokeWidth * (1 + 4 * (g + 0.5) / STROKE_GROUPS); // step size of the group
+            ctx.beginPath();
+            for (var k = 0; k < seg.length; k += 4) {
+                ctx.moveTo(seg[k], seg[k + 1]);
+                ctx.lineTo(seg[k + 2], seg[k + 3]);
+            }
+            ctx.stroke();
         }
 
         // Tiny on-canvas status (optional)
