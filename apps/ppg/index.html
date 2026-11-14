@@ -225,9 +225,10 @@
     </div>
     <canvas class="trend" id="trtemp"></canvas>
     <p class="hint" style="margin: 4px 0">From the frequency of an oscillator inside the microcontroller (RC16M, measured
-      against the crystal every second): fewer counts when warmer, about 9.5 counts per &deg;C on LibRing_6B between 7.5
-      and 42 &deg;C. The temperature of the ring itself, not of the skin. "Set" adds a reference for this ring once the
-      reading has settled at a known temperature (kept in this browser); the estimate interpolates between them.</p>
+      against the crystal every second): fewer counts when warmer, 5 to 8 counts per &deg;C depending on the ring. The
+      temperature of the ring itself, not of the skin. Each ring needs its own references: LibRing_6B, 0E, 06 and 57 come
+      calibrated (22 and 37 &deg;C); for another ring, "Set" adds a reference once the reading has settled at a known
+      temperature (kept in this browser), two references far apart give its slope.</p>
   </div>
 
   <div class="panel">
@@ -304,9 +305,18 @@ const TREND_MAX = 600;         // 10 min
 // ring ("Set", kept in this browser): interpolated between them (exact at each, follows
 // the curvature), extended past the ends; with a single reference, the default slope.
 // LibRing_6B (2026-11-13): 3325 at ~7.5 C (outside), 3163 at 22 C (table), 2995 at 42 C
-// (laptop exhaust, air thermometer): 11.2 counts per C below 22 C, 8.4 above, 9.5 fitted.
+// (laptop exhaust, air thermometer): 11.2 counts per C below 22 C, 8.4 above, 9.5 fitted;
+// checked 2026-11-14: 22.8 C (room 22) and 37.0 C (thermometer 37).
+// 0E, 06, 57 (2026-11-14, with 6B, all 4 together): table at 22 C, laptop exhaust at 37 C
+// (thermometer). Counts differ a lot between rings (2645-3157 at 22 C) and so do the slopes
+// (5.4-8.0 counts per C): one calibration per ring, 2 references to get its slope.
 const RC16_COUNTS_PER_C = 9.5;
-const RC16_DEFAULT_CAL = {LibRing_6B: [{count: 3325, temp: 7.5}, {count: 3163, temp: 22}, {count: 2995, temp: 42}]};
+const RC16_DEFAULT_CAL = {
+  LibRing_6B: [{count: 3325, temp: 7.5}, {count: 3163, temp: 22}, {count: 2995, temp: 42}],
+  LibRing_0E: [{count: 3015, temp: 22}, {count: 2922, temp: 37}],
+  LibRing_06: [{count: 2645, temp: 22}, {count: 2563, temp: 37}],
+  LibRing_57: [{count: 2850, temp: 22}, {count: 2748, temp: 37}],
+};
 const tempTrend = [];          // estimate (C), one point per second
 let tempOn = false, rc16Smooth = null; // RC16M count, low-pass filtered (~5 s)
 let sampleCount = 0, rateT0 = 0;
