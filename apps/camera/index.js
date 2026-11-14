@@ -55,6 +55,7 @@ connectBtn.addEventListener('click', async () => {
         console.error('BLE connection failed', error);
     }
 });
+BLE.autoConnect(() => connectBtn.click()); // the last ring, if the browser still allows it
 
 // Assuming btn characteristic emits '1' for pressed
 BLE.onButton((pressed) => {

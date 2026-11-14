@@ -4,6 +4,7 @@
 // - disconnectFromBLE()
 // - onAccel(handler)
 // - onButton(handler)
+// - autoConnect(start): on page load, start() for the last ring (needs ../shared/last-ring.js)
 //
 // NOTE: Web Bluetooth requires a secure context (HTTPS) or localhost.
 
@@ -12,6 +13,9 @@
 
   /** @type {BluetoothDevice | null} */
   let device = null;
+  /** @type {BluetoothDevice | null} the last ring, for the next connectToBLE() (autoConnect()) */
+  let pendingDevice = null;
+  const lastRing = global.libringLastRing; // ../shared/last-ring.js
   /** @type {BluetoothRemoteGATTServer | null} */
   let server = null;
   /** @type {BluetoothRemoteGATTService | null} */
@@ -105,13 +109,18 @@
         return;
       }
 
-      device = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: 'LibRing' }, { name: 'TEST' }], // LibRing_XX (XX: ring ID), LibRing, TEST: older firmware
-        optionalServices: [serviceUuid]
-      });
+      if (pendingDevice) { // the last ring: no chooser
+        device = pendingDevice;
+        pendingDevice = null;
+      } else {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: 'LibRing' }, { name: 'TEST' }], // LibRing_XX (XX: ring ID), LibRing, TEST: older firmware
+          optionalServices: [serviceUuid]
+        });
+      }
 
       if (!device.gatt) throw new Error('No GATT Server');
-      server = await device.gatt.connect();
+      server = lastRing ? await lastRing.gattConnect(device) : await device.gatt.connect();
 
       service = await server.getPrimaryService(serviceUuid);
 
@@ -126,6 +135,7 @@
       device.addEventListener('gattserverdisconnected', onDisconnected);
 
       console.log('BLE connected:', device.name || device.id);
+      if (lastRing) lastRing.remember(device);
     } catch (error) {
       console.error('Error connecting to device:', error);
       throw error;
@@ -148,10 +158,19 @@
     buttonHandler = typeof handler === 'function' ? handler : function () {};
   }
 
+  // On page load: start() (the app's usual connection, e.g. its Connect button) with the
+  // last ring, if the browser still allows it
+  function autoConnect(start) {
+    if (!lastRing || !navigator.bluetooth) return;
+    lastRing.autoConnect(function (d) { pendingDevice = d; start(); });
+  }
+  if (lastRing) lastRing.releaseOnLeave(function () { return device; });
+
   global.BLE = {
     connectToBLE,
     disconnectFromBLE,
     onAccel,
-    onButton
+    onButton,
+    autoConnect
   };
 })(window);

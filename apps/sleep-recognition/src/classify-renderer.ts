@@ -1,4 +1,4 @@
-import { connectToBLE, disconnectFromBLE, setNtfHandler, setDisconnectHandler } from './lib/shared/accelerometer/ble';
+import { connectToBLE, disconnectFromBLE, setNtfHandler, setDisconnectHandler, autoConnect } from './lib/shared/accelerometer/ble';
 import { SleepStateMachine, type SleepState } from './lib/shared/SleepStateMachine';
 
 // Initialize on page load
@@ -164,4 +164,5 @@ if (body && body.id === 'page-classify') {
             }
         }
     });
+    autoConnect(connectToggleBtn); // the last ring, if the browser still allows it
 }

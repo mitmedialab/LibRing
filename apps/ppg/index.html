@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LibRing PPG</title>
 <script src="../shared/webble-notice.js"></script>
+<script src="../shared/last-ring.js"></script>
 <style>
   :root {
     --bg: #f5f6f8; --panel: #ffffff; --text: #1b2130; --muted: #667085; --border: #dde1e8;
@@ -885,15 +886,19 @@ function setConnected(on) {
   if (!on && tempOn) { tempOn = false; $('temptoggle').textContent = 'Start'; }
   $('connect').disabled = on;
 }
+let pendingDevice = null; // the last ring, for the next connect() (automatic connection)
 async function connect() {
   try {
-    status('Choose the ring…');
-    device = await navigator.bluetooth.requestDevice({filters: [{namePrefix: 'LibRing'}], optionalServices: [SERVICE]});
+    if (pendingDevice) { device = pendingDevice; pendingDevice = null; } // no chooser
+    else {
+      status('Choose the ring…');
+      device = await navigator.bluetooth.requestDevice({filters: [{namePrefix: 'LibRing'}], optionalServices: [SERVICE]});
+    }
     device.addEventListener('gattserverdisconnected', () => {
       ppg = null; setConnected(false); status('Disconnected', 'err'); log('disconnected');
     });
-    status('Connecting…');
-    const server = await device.gatt.connect();
+    status(`Connecting to ${device.name}…`);
+    const server = await libringLastRing.gattConnect(device);
     const service = await server.getPrimaryService(SERVICE);
     try { ppg = await service.getCharacteristic(PPG); }
     catch (e) { throw new Error('this ring has no PPG characteristic: flash the latest firmware'); }
@@ -902,6 +907,7 @@ async function connect() {
     setConnected(true);
     status(`Connected to ${device.name}`, 'ok');
     log(`connected to ${device.name}`);
+    libringLastRing.remember(device);
   } catch (e) {
     status(e.message, 'err');
     log(`connect failed: ${e.message}`);
@@ -926,6 +932,9 @@ async function sweep() {
 
 // ---- wiring ----
 $('connect').onclick = connect;
+// the last ring, if the browser still allows it; released when leaving / reloading
+libringLastRing.autoConnect(d => { pendingDevice = d; connect(); });
+libringLastRing.releaseOnLeave(() => device);
 $('disconnect').onclick = () => device && device.gatt.disconnect();
 $('restart').onclick = restart;
 $('readall').onclick = readAll;

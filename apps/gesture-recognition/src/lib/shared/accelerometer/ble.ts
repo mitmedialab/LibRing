@@ -1,4 +1,15 @@
+import '../../../../../shared/last-ring.js'; // globalThis.libringLastRing (automatic connection)
+
+// apps/shared/last-ring.js
+const lastRing = (globalThis as any).libringLastRing as {
+    remember(device: BluetoothDevice): void;
+    gattConnect(device: BluetoothDevice): Promise<BluetoothRemoteGATTServer>;
+    autoConnect(start: (device: BluetoothDevice) => void): void;
+    releaseOnLeave(getDevice: () => BluetoothDevice | null): void;
+};
+
 let device: BluetoothDevice;
+let pendingDevice: BluetoothDevice | null = null; // ring for the next connectToBLE() (automatic)
 let server: BluetoothRemoteGATTServer;
 let service: BluetoothRemoteGATTService;
 let characteristic: BluetoothRemoteGATTCharacteristic;
@@ -128,7 +139,7 @@ async function startPolling() {
 
 // One connection attempt: GATT connection, characteristics, notifications, first data
 async function connectOnce() {
-    server = await withTimeout(device.gatt!.connect(), CONNECT_TIMEOUT_MS, 'Connection');
+    server = await withTimeout(lastRing.gattConnect(device), CONNECT_TIMEOUT_MS, 'Connection');
     console.log('Connected to GATT server');
     service = await server.getPrimaryService(serviceUuid);
     characteristic = await service.getCharacteristic(characteristicUuid);
@@ -166,12 +177,17 @@ export async function connectToBLE(onStatus: StatusHandler = () => {}) {
         throw new Error('Web Bluetooth is not available in this browser: use Chrome or Edge (iPhone / iPad: the Bluefy app)');
     }
 
-    console.log('Requesting Bluetooth devices...');
-    device = await navigator.bluetooth.requestDevice({
-        // acceptAllDevices: true,
-        filters: [{ namePrefix: 'LibRing' }, { name: 'TEST' }], // LibRing_XX (XX: ring ID), LibRing, TEST: older firmware
-        optionalServices: [serviceUuid],
-    });
+    if (pendingDevice) { // the last ring (autoConnect()): no chooser
+        device = pendingDevice;
+        pendingDevice = null;
+    } else {
+        console.log('Requesting Bluetooth devices...');
+        device = await navigator.bluetooth.requestDevice({
+            // acceptAllDevices: true,
+            filters: [{ namePrefix: 'LibRing' }, { name: 'TEST' }], // LibRing_XX (XX: ring ID), LibRing, TEST: older firmware
+            optionalServices: [serviceUuid],
+        });
+    }
     console.log('Selected device:', device.name || 'Unknown');
     if (!device.gatt) throw new Error('No GATT Server');
     device.removeEventListener('gattserverdisconnected', onDisconnected);
@@ -187,6 +203,7 @@ export async function connectToBLE(onStatus: StatusHandler = () => {}) {
             userDisconnect = false;
             console.log(`Connected in ${((Date.now() - t0) / 1000).toFixed(1)} s (attempt ${attempt})`);
             onStatus('Connected');
+            lastRing.remember(device);
             return;
         } catch (error) {
             lastError = error;
@@ -202,6 +219,24 @@ export async function connectToBLE(onStatus: StatusHandler = () => {}) {
             'Check that it is charged, close by, and not connected to another app or tab, then try again.',
     );
 }
+
+/**
+ * On page load, connect to the last ring if the browser still allows it, by clicking the
+ * app's Connect button (its usual connection path, without the chooser).
+ */
+export function autoConnect(connectButton: HTMLElement | null) {
+    if (!connectButton || !navigator.bluetooth) return;
+    lastRing.autoConnect((d) => {
+        pendingDevice = d;
+        connectButton.click();
+    });
+}
+
+// Leaving or reloading the page: release the ring at once
+lastRing.releaseOnLeave(() => {
+    if (device?.gatt?.connected) userDisconnect = true; // not a ring drop
+    return device ?? null;
+});
 
 export async function disconnectFromBLE() {
     if (!device?.gatt) return;

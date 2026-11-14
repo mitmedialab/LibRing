@@ -1,4 +1,4 @@
-import { connectToBLE, disconnectFromBLE, setNtfHandler, setBtnHandler, setDisconnectHandler } from './lib/shared/accelerometer/ble';
+import { connectToBLE, disconnectFromBLE, setNtfHandler, setBtnHandler, setDisconnectHandler, autoConnect } from './lib/shared/accelerometer/ble';
 import { AccelChart } from './lib/shared/plot';
 import ClassificationMLRecorder, { ClassifyHandlerData } from './lib/classify/ClassificationMLRecorder';
 // import { GestureHandler } from './lib/classify/GestureHandler';
@@ -155,6 +155,7 @@ if (classifyPage) {
                 });
         }
     });
+    autoConnect(connectToggleBtn); // the last ring, if the browser still allows it
 
     // recordingToggleBtn?.addEventListener('click', () => {
     //     if (isRecording) {

@@ -122,7 +122,7 @@ var sketch = function (p) {
         );
     };
 
-    // Web Bluetooth requires a user gesture.
+    // Web Bluetooth requires a user gesture to choose a ring (not for the last one: below)
     p.mousePressed = async function () {
         if (!window.BLE) return;
         if (isBleConnected) return;
@@ -134,6 +134,8 @@ var sketch = function (p) {
             console.error(e);
         }
     };
+
+    if (window.BLE && window.BLE.autoConnect) window.BLE.autoConnect(() => p.mousePressed()); // the last ring
 
     p.keyReleased = function () {
         if (p.key == 's' || p.key == 'S') p.saveCanvas(gd.timestamp(), 'png');
