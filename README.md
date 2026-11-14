@@ -21,7 +21,7 @@ With this firmware, the ring streams its sensors over Bluetooth Low Energy (BLE)
 | Camera Controller | Takes pictures with the webcam when the ring is touched |
 | Web MIDI Interface | Sends the accelerometer X/Y/Z as MIDI control changes, and the touch as a note (or CC) |
 | Perlin Noise Visualizer | Drives a Perlin noise field with the ring's tilt |
-| Heart Rate, HRV & SpO2 (experimental) | Pulse waveform, heart rate computed on the ring, heart rate variability, session trends, and an uncalibrated SpO2 estimate |
+| Heart Rate, HRV & SpO2 (experimental) | Pulse waveform, heart rate computed on the ring, heart rate variability, session trends, an uncalibrated SpO2 estimate, and the ring's temperature |
 | Webcam Pulse (experimental) | Heart rate from the laptop webcam, as an independent check of the ring (no ring needed) |
 
 ## Install the firmware (from a phone)
@@ -130,6 +130,7 @@ Other keeprapid ring/band models use other product IDs, mostly on a different MC
 - Pinout: `docs/Pinout_SR08_by_ATC1441.txt` (with the LED matrix layout and the indicators).
 - PPG sensor: TYHX HX3918 (chip ID `0x27`, I2C `0x44`, shared bus with the accelerometer). The LEDs are driven by the sensor: green on phase 2 for the heart rate; red (phase 1) and IR (phase 3) in SpO2 mode.
 - SpO2 is experimental and not calibrated: most of the red/IR light reaches the sensor inside the ring without going through the finger, the web app measures this leak once per ring (ring off the finger, in the dark). It is not a medical measurement.
+- Temperature: none of the chips has a usable temperature sensor (the DA14585's ADC has no temperature channel; the SC7A20 accelerometer, WHO_AM_I `0x11`, doesn't implement the LIS2DH one). The firmware uses the microcontroller's RC16M oscillator instead, counted against the crystal every second (the radio's own temperature proxy): fewer counts when warmer, ~9.5 counts per °C on one ring between 7.5 and 42 °C, so it needs a reference per ring (the web app keeps them). It measures the ring itself, not the skin.
 
 ## Acknowledgements
 

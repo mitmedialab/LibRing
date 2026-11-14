@@ -214,6 +214,19 @@
     <canvas class="trend" id="trhrv"></canvas>
     <div class="trend-head"><span><b style="color: var(--red)">SpO2</b> (%, experimental, SpO2 mode)</span><span id="trendspo2"></span></div>
     <canvas class="trend" id="trspo2"></canvas>
+    <div class="trend-head"><span><b style="color: var(--accent)">Temperature</b> (estimate, experimental)
+      <button id="temptoggle" disabled style="padding: 2px 10px; margin-left: 6px">Start</button></span><span id="trendtemp"></span></div>
+    <div class="row small" style="margin: 4px 0; align-items: baseline; gap: 10px">
+      <span style="font-size: 26px; font-weight: 600; color: var(--text)" id="tempest">-- &deg;C</span>
+      <span>the ring is at <input id="calt" value="22" style="width: 44px"> &deg;C now
+        <button id="calset" disabled style="padding: 2px 10px">Set</button></span>
+      <span class="hint" style="margin: 0" id="calinfo"></span>
+    </div>
+    <canvas class="trend" id="trtemp"></canvas>
+    <p class="hint" style="margin: 4px 0">From the frequency of an oscillator inside the microcontroller (RC16M, measured
+      against the crystal every second): fewer counts when warmer, about 9.5 counts per &deg;C on LibRing_6B between 7.5
+      and 42 &deg;C. The temperature of the ring itself, not of the skin. "Set" adds a reference for this ring once the
+      reading has settled at a known temperature (kept in this browser); the estimate interpolates between them.</p>
   </div>
 
   <div class="panel">
@@ -286,6 +299,15 @@ let ledCount = 0;              // LED channel samples received (absolute index f
 const hrv = {lastBeat: -1e9, prev: null, validFrom: 0, ibis: []};   // ibis: {t (ms), ibi (ms)}
 const trend = [];              // one point per second: {hr, rmssd, spo2} (NaN: none)
 const TREND_MAX = 600;         // 10 min
+// Temperature estimate from the RC16M count (fewer counts when warmer). References per
+// ring ("Set", kept in this browser): interpolated between them (exact at each, follows
+// the curvature), extended past the ends; with a single reference, the default slope.
+// LibRing_6B (2026-11-13): 3325 at ~7.5 C (outside), 3163 at 22 C (table), 2995 at 42 C
+// (laptop exhaust, air thermometer): 11.2 counts per C below 22 C, 8.4 above, 9.5 fitted.
+const RC16_COUNTS_PER_C = 9.5;
+const RC16_DEFAULT_CAL = {LibRing_6B: [{count: 3325, temp: 7.5}, {count: 3163, temp: 22}, {count: 2995, temp: 42}]};
+const tempTrend = [];          // estimate (C), one point per second
+let tempOn = false, rc16Smooth = null; // RC16M count, low-pass filtered (~5 s)
 let sampleCount = 0, rateT0 = 0;
 let led = 'green', current = 2, agcState = null;
 let recording = null;           // see Recorder
@@ -305,6 +327,16 @@ const ledColor = () => css(led === 'off' ? '--off' : `--${led}`);
 function gatt(op) { busy = busy.then(op, op); return busy; }
 async function writeReg(reg, val) { await gatt(() => ppg.writeValueWithResponse(new Uint8Array([reg, val]))); }
 async function command(cmd, val) { await gatt(() => ppg.writeValueWithResponse(new Uint8Array([cmd, val]))); }
+// Temperature: [0xF1] -> [0xF1, status (0: fresh), RC16M count (2 bytes, little endian)]
+async function readTemperatureCount() {
+  return gatt(async () => {
+    await ppg.writeValueWithResponse(new Uint8Array([0xf1]));
+    await new Promise(r => setTimeout(r, 100));
+    const d = new DataView((await ppg.readValue()).buffer);
+    if (d.byteLength < 4 || d.getUint8(0) !== 0xf1) throw new Error('no temperature (firmware older than 2026-11-13?)');
+    return d.getUint8(1) === 0 ? d.getUint16(2, true) : null;
+  });
+}
 async function readRegs(reg, n) {
   return gatt(async () => {
     await ppg.writeValueWithResponse(new Uint8Array([0xfe, reg, n]));
@@ -849,7 +881,8 @@ async function ledCheck() {
 }
 
 function setConnected(on) {
-  for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep', 'leakcal', 'ledcheck']) $(id).disabled = !on;
+  for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep', 'leakcal', 'ledcheck', 'temptoggle', 'calset']) $(id).disabled = !on;
+  if (!on && tempOn) { tempOn = false; $('temptoggle').textContent = 'Start'; }
   $('connect').disabled = on;
 }
 async function connect() {
@@ -930,7 +963,65 @@ for (const ch of ['red', 'ir']) {
 showSpo2Currents();
 $('spo2on').onchange = () => setSpo2($('spo2on').checked).catch(e => log(e.message));
 $('leakcal').onclick = () => startLeakCal().catch(e => log(e.message));
-$('trendclear').onclick = () => { trend.length = 0; hrv.ibis.length = 0; hrv.prev = null; };
+$('trendclear').onclick = () => { trend.length = 0; hrv.ibis.length = 0; hrv.prev = null;
+  tempTrend.length = 0; rc16Smooth = null; renderTemperature(); };
+
+// ---- temperature (experimental) ----
+const calKey = () => `libring-rc16cal-${device ? device.name : ''}`;
+function loadCal() { // [{count, temp}, ...] or null
+  try { const c = JSON.parse(localStorage.getItem(calKey())); if (c) return c; } catch (e) { /* private mode */ }
+  return device ? RC16_DEFAULT_CAL[device.name] || null : null;
+}
+function calPoints(cal) { // sorted by count, without pairs too close to give a slope
+  const pts = [...cal].sort((a, b) => a.count - b.count);
+  return pts.filter((p, i) => i === 0 || p.count - pts[i - 1].count >= 10);
+}
+function estimate(count, cal = loadCal()) {
+  if (!cal || !cal.length || count == null) return NaN;
+  const pts = calPoints(cal);
+  if (pts.length === 1) return pts[0].temp + (pts[0].count - count) / RC16_COUNTS_PER_C;
+  let i = pts.findIndex(p => p.count >= count); // segment [i - 1, i], ends extended
+  i = i <= 0 ? 1 : i;
+  const a = pts[i - 1], b = pts[i];
+  return a.temp + (count - a.count) * (b.temp - a.temp) / (b.count - a.count);
+}
+$('temptoggle').onclick = async () => {
+  tempOn = !tempOn;
+  $('temptoggle').textContent = tempOn ? 'Stop' : 'Start';
+  while (tempOn && ppg) {
+    const t0 = performance.now();
+    try {
+      const count = await readTemperatureCount();
+      if (count != null) rc16Smooth = rc16Smooth == null ? count : rc16Smooth + 0.2 * (count - rc16Smooth);
+      tempTrend.push(estimate(rc16Smooth));
+      if (tempTrend.length > TREND_MAX) tempTrend.shift();
+      renderTemperature();
+    } catch (e) { log(`temperature: ${e.message}`); tempOn = false; $('temptoggle').textContent = 'Start'; }
+    await new Promise(res => setTimeout(res, Math.max(0, 1000 - (performance.now() - t0))));
+  }
+};
+$('calset').onclick = () => {
+  const t = parseFloat($('calt').value);
+  if (!device || rc16Smooth == null || !Number.isFinite(t)) { log('temperature reference: press Start first'); return; }
+  const cal = (loadCal() || []).filter(p => Math.abs(p.temp - t) >= 3); // replaces one within 3 C
+  cal.push({count: Math.round(rc16Smooth), temp: t});
+  try { localStorage.setItem(calKey(), JSON.stringify(cal)); } catch (e) { /* private mode */ }
+  log(`temperature reference for ${device.name}: ${Math.round(rc16Smooth)} counts = ${t} °C`);
+  renderTemperature();
+};
+function renderTemperature() {
+  const fmt = v => v.toFixed(1);
+  const r = drawSeries($('trtemp'), tempTrend, css('--accent'), {span: TREND_MAX, width: 1.8, labels: true, format: fmt});
+  const cal = loadCal(), est = estimate(rc16Smooth, cal);
+  $('tempest').textContent = Number.isFinite(est) ? `≈ ${est.toFixed(1)} °C` : '-- °C';
+  $('trendtemp').textContent = r ? `range ${fmt(r.min)}-${fmt(r.max)} °C` +
+    (rc16Smooth != null ? ` · RC16M ${Math.round(rc16Smooth)}` : '') : '';
+  const pts = cal ? calPoints(cal) : [];
+  const slopes = pts.slice(1).map((b, i) => (pts[i].count - b.count) / (b.temp - pts[i].temp));
+  $('calinfo').textContent = !device ? '' : cal ? `${device.name}: ` + pts.map(p => `${p.count} = ${p.temp} °C`).join(', ') +
+    (slopes.length ? ` (${slopes.map(k => k.toFixed(1)).join(' / ')} counts per °C)` : ` (default ${RC16_COUNTS_PER_C} counts per °C)`) :
+    `not calibrated yet for ${device.name}: leave it a few minutes at a known temperature, then Set`;
+}
 // ---- Recorder (raw packets, settings, labels) ----
 const hexBytes = a => Array.from(a, hex).join('');
 function settings() {
