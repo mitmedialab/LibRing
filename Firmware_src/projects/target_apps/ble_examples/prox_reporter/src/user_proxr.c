@@ -8,6 +8,7 @@
 #include "app_security.h"
 #include "user_proxr.h"
 #include "arch.h"
+#include "arch_system.h" // get_rc16m_count()
 #include "arch_api.h"
 #include "lld_evt.h"
 #include "app_task.h"
@@ -550,9 +551,46 @@ static void debug_read(void)
 //                       on line 0-5 (5: P2_9, not used by the display); line 0xFF:
 //                       clear all
 //   [0xF4, mode]        display mode: 0 fluid, 1 ring ID, 2 off (as the long press)
+//   [0xF1]              temperature: characteristic value [0xF1, status, RC16M count
+//                       (2 bytes, little endian)], status 1: none in the last 3 s
+//                       (clock_temperature_update())
 // These command bytes are also trim registers (0xF0-0xFB) of the sensor: they can't
 // be written with [reg, value]. Needs the I2C controller (set up 5 s after boot or
 // by a subscription).
+// Temperature from a clock: the RC16M oscillator counted against the crystal
+// (get_rc16m_count(): XTAL16M cycles in 1024 RC16M cycles), the radio's own temperature
+// proxy for its recalibrations. Fewer counts when warmer: ~9.5 counts per C on LibRing_6B
+// between 7.5 and 42 C (11.2 below 22 C, 8.4 above; the SDK assumes 24 counts ~ 5 C).
+// Relative: the clients convert it with references per ring (apps/ppg). The temperature
+// of the ring itself. Measured every second by the main timer, only when the clock
+// measurement block (CLK_REF_*) is free: it is shared with the RCX calibration that the
+// BLE sleep timing depends on (measuring during it would corrupt that calibration).
+extern uint8_t rcx_cal_in_progress;     // arch_system.c
+static uint16_t rc16m_count;            // last RC16M count
+static uint32_t rc16m_time;             // when (lld_evt_time_get(), 625 us units)
+
+static void clock_temperature_update(void)
+{
+    static uint8_t ticks;
+    if (ticks < 10) {
+        ticks++;
+        return;
+    }
+    if (rcx_cal_in_progress || (GetWord16(CLK_REF_SEL_REG) & 0x0004)) {
+        return; // next tick
+    }
+    ticks = 0;
+    rc16m_count = get_rc16m_count();
+    rc16m_time = lld_evt_time_get();
+}
+
+static void clock_temperature_read(void)
+{
+    uint32_t age = (lld_evt_time_get() - rc16m_time) & 0x07FFFFFF;
+    uint8_t r[4] = {0xF1, (rc16m_count && age < 4800) ? 0 : 1, rc16m_count & 0xFF, rc16m_count >> 8};
+    set_ppg_value(r, sizeof(r));
+}
+
 void user_ppg_config(const uint8_t *value, uint16_t len) {
     if (suota_active || !has_timer_started) {
         return;
@@ -581,6 +619,8 @@ void user_ppg_config(const uint8_t *value, uint16_t len) {
         } else {
             memset(LED_overlay, 0, sizeof(LED_overlay));
         }
+    } else if (len == 1 && value[0] == 0xF1) {
+        clock_temperature_read();
     } else if (len == 2) {
         hx3918_write_reg(value[0], value[1]);
     } else if (len == 3 && value[0] == 0xFE && value[2] <= 16) {
@@ -795,6 +835,7 @@ static void main_timer_cb(void) {
     }
     update_charging();
     update_battery();
+    clock_temperature_update();
 
     if (accel_streaming) {
         read_and_notify_accel();
