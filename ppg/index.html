@@ -1,0 +1,1158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LibRing PPG</title>
+<script src="../shared/webble-notice.js"></script>
+<script src="../shared/last-ring.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1b2130; --muted: #667085; --border: #dde1e8;
+    --accent: #2563eb; --warn: #b42318; --ok: #067647; --grid: #eef0f4;
+    --green: #16a34a; --red: #dc2626; --ir: #7c3aed; --off: #98a2b3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10131a; --panel: #191d26; --text: #e7e9ee; --muted: #98a2b3; --border: #2c3240;
+      --accent: #60a5fa; --warn: #f97066; --ok: #47cd89; --grid: #222835;
+      --green: #4ade80; --red: #f87171; --ir: #a78bfa; --off: #667085;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; flex: 1 1 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  input, select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border);
+                  background: var(--bg); color: var(--text); }
+  input[type=range] { padding: 0; width: 180px; accent-color: var(--accent); }
+  #status { color: var(--muted); }
+  #status.ok { color: var(--ok); } #status.err { color: var(--warn); }
+
+  .live { display: grid; grid-template-columns: 1fr 190px; gap: 12px; }
+  @media (max-width: 700px) { .live { grid-template-columns: 1fr; } }
+  .bpm { display: flex; flex-direction: column; align-items: center; justify-content: center;
+         border-left: 1px solid var(--border); padding-left: 12px; }
+  @media (max-width: 700px) { .bpm { border-left: 0; padding-left: 0; } }
+  .bpm .value { font-size: 56px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .bpm .unit { color: var(--muted); margin-top: 2px; }
+  .bpm .heart { font-size: 22px; color: var(--led); transition: transform .12s; }
+  .bpm .conf { color: var(--muted); font-size: 12px; margin-top: 8px; text-align: center; }
+  .trace-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 13px; }
+  .trace-head b { color: var(--text); font-weight: 600; }
+  canvas { width: 100%; display: block; }
+  #cpulse { height: 220px; } #craw { height: 110px; } #cspo2 { height: 160px; }
+  #ctacho { height: 140px; } .trend { height: 90px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 10px; }
+  .stat { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .trend-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .trend-head b { color: var(--text); }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  .hint a { color: var(--accent); }
+  .meter { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; width: 160px; }
+  .meter > div { height: 100%; background: var(--led); width: 0; transition: width .3s; }
+
+  .leds { display: flex; gap: 6px; }
+  .led-btn { display: flex; align-items: center; gap: 6px; }
+  .led-btn .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--panel); }
+  .led-btn.active { border-color: var(--c); box-shadow: 0 0 0 1px var(--c) inset; font-weight: 600; }
+  label.inline { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+
+  details > summary { cursor: pointer; font-weight: 600; }
+  h2 { font-size: 15px; margin: 14px 0 8px; }
+  .regs { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
+  .reg { display: flex; gap: 6px; align-items: center; }
+  .reg label { width: 150px; font-size: 12px; color: var(--muted); }
+  .reg label code { color: var(--text); }
+  .reg input { width: 52px; font-family: ui-monospace, monospace; }
+  .reg input.changed { border-color: var(--accent); }
+  .small input { width: 60px; }
+  #log { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap;
+         max-height: 160px; overflow-y: auto; color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>LibRing PPG</h1>
+    <button id="connect" class="primary">Connect</button>
+    <button id="disconnect" disabled>Disconnect</button>
+    <span id="status">Not connected</span>
+    <span class="row" style="gap: 6px; margin-left: auto">
+      <button id="rec" title="Records everything the ring sends, the settings and your labels, for analysis">Record</button>
+      <span class="hint" style="margin:0">last 10 s:</span>
+      <button id="lgood" disabled title="The last 10 s on screen look good (key G)">Good (G)</button>
+      <button id="lmedium" disabled title="The last 10 s on screen look medium (key M)">Medium (M)</button>
+      <button id="lbad" disabled title="The last 10 s on screen look bad / noisy (key B)">Bad (B)</button>
+      <button id="recsave" disabled>Download</button>
+      <span id="recinfo" class="hint" style="margin:0"></span>
+    </span>
+  </header>
+
+  <div class="panel">
+    <div class="row" style="justify-content: space-between">
+      <div class="leds" id="leds">
+        <button class="led-btn" data-led="off" style="--c: var(--off)"><span class="dot"></span>Off</button>
+        <button class="led-btn" data-led="green" style="--c: var(--green)"><span class="dot"></span>Green</button>
+        <button class="led-btn" data-led="red" style="--c: var(--red)"><span class="dot"></span>Red</button>
+        <button class="led-btn" data-led="ir" style="--c: var(--ir)"><span class="dot"></span>IR</button>
+      </div>
+      <button id="ledcheck" disabled title="The selected LED at maximum for 6 s (current 255, 510 µs pulses, 100 Hz), then back to the previous settings">Camera check</button>
+      <label class="inline">Brightness <input type="range" id="current" min="0" max="255" value="2">
+        <span id="currentv" style="width: 104px; color: var(--text)">2</span></label>
+      <label class="inline">Pulse <select id="ontime">
+        <option value="16">32 µs</option><option value="32" selected>64 µs</option>
+        <option value="64">128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option>
+      </select></label>
+      <label class="inline"><input type="checkbox" id="auto" checked> Auto (ring)</label>
+    </div>
+    <p class="hint" id="agcinfo"></p>
+    <p class="hint">Heart rate: green on the finger. Red and IR are for SpO2. Auto: the ring's gain control (bright LED +
+      offset DACs); moving the brightness or pulse sets manual mode. The LEDs flash briefly (25 times per second): IR
+      is invisible to the eye and too dim for most phone cameras in normal use. Camera check: the selected LED at
+      maximum for 6 s, look through the phone's front camera (rear cameras usually filter IR).
+      To check the ring's heart rate, you can try to measure it with the <a href="../rppg/">webcam heart rate monitor</a> (very experimental).</p>
+  </div>
+
+  <div class="panel" id="livepanel">
+    <div class="live">
+      <div>
+        <div class="trace-head"><span><b>Pulse</b> (LED channel, drift removed)</span><span id="pulseinfo"></span></div>
+        <canvas id="cpulse"></canvas>
+        <div class="trace-head" style="margin-top: 10px"><span><b>LED channel</b> raw</span>
+          <span style="display:flex; gap:8px; align-items:center">level <span class="meter"><div id="level"></div></span><span id="rawinfo"></span></span></div>
+        <canvas id="craw"></canvas>
+      </div>
+      <div class="bpm">
+        <div class="heart" id="heart">♥</div>
+        <div class="value" id="bpm">--</div>
+        <div class="unit">bpm</div>
+        <div class="conf" id="conf">Connect, then wear the ring</div>
+      </div>
+    </div>
+    <p class="hint" id="rate"></p>
+  </div>
+
+  <div class="panel" id="hrvpanel">
+    <div class="live">
+      <div>
+        <div class="trace-head"><span><b>Heart rate variability</b>: interval between beats (ms), last 2 min</span><span id="hrvcount"></span></div>
+        <canvas id="ctacho"></canvas>
+      </div>
+      <div class="bpm">
+        <div class="value" id="rmssd">--</div>
+        <div class="unit">ms RMSSD</div>
+        <div class="conf" id="hrvinfo">Wear the ring, keep still</div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>SDNN</span><b id="sdnn">--</b></div>
+      <div class="stat"><span>heart rate from beats</span><b id="hrvbpm">--</b></div>
+      <div class="stat"><span>pNN50</span><b id="pnn50">--</b></div>
+      <div class="stat"><span>beats (last minute)</span><b id="hrvn">--</b></div>
+    </div>
+    <p class="hint">Each beat is timed on the green pulse (steepest edge, refined by matching the average pulse
+      shape), only while the pulse is clear and the hand still; deformed beats and intervals off by more than
+      20&nbsp;% from the recent ones are dropped. RMSSD (beat-to-beat changes) and SDNN (spread) over the last minute. At 24 samples
+      per second the timing noise is ~7&nbsp;ms per interval: an estimate, which reads a bit high when the
+      variability is low.</p>
+  </div>
+
+  <div class="panel" id="spo2panel">
+    <div class="row" style="justify-content: space-between">
+      <label class="inline"><input type="checkbox" id="spo2on"> <b style="color: var(--text)">Measure SpO2</b> (red + IR, experimental)</label>
+      <span class="row" style="gap: 8px">
+        <span class="hint" style="margin:0">Once per ring: take it off, put it in the dark (closed box), then</span>
+        <button id="leakcal" disabled>Calibrate light leak</button>
+      </span>
+    </div>
+    <div class="row" style="margin-top: 6px">
+      <label class="inline"><b style="color: var(--red)">Red</b> brightness <input type="range" id="redcur" min="1" max="255" value="32">
+        <span id="redcurv" style="width: 96px; color: var(--text)">32</span></label>
+      <label class="inline">pulse <select id="redpulse"><option value="16">32 µs</option><option value="32" selected>64 µs</option><option value="64">128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option></select></label>
+      <label class="inline"><b style="color: var(--ir)">IR</b> brightness <input type="range" id="ircur" min="1" max="255" value="32">
+        <span id="ircurv" style="width: 96px; color: var(--text)">32</span></label>
+      <label class="inline">pulse <select id="irpulse"><option value="16">32 µs</option><option value="32" selected>64 µs</option><option value="64">128 µs</option><option value="128">256 µs</option><option value="255">510 µs</option></select></label>
+    </div>
+    <div class="live">
+      <div>
+        <div class="trace-head"><span><b>Red</b> and <b>IR</b> pulses (each scaled to fit)</span><span id="spo2corr"></span></div>
+        <canvas id="cspo2"></canvas>
+      </div>
+      <div class="bpm">
+        <div class="value" id="spo2">--</div>
+        <div class="unit">% SpO2</div>
+        <div class="conf" id="spo2info">Off</div>
+      </div>
+    </div>
+    <p class="hint" id="spo2detail"></p>
+    <p class="hint" id="spo2spec"></p>
+    <p class="hint">Not calibrated, not a medical measurement: ratio of the red and IR pulses (each divided by
+      the light that went through the finger) with the textbook curve 110 &minus; 25&nbsp;R. Most of the light
+      reaching the sensor leaks inside the ring: the leak calibration measures it (kept in this browser, per
+      ring and pulse length). The ring shows a value only when the red and IR pulses match (correlation &ge;
+      90&nbsp;%). Wear the ring with the sensor on the palm side, hand palm up and relaxed, nothing pressing
+      on the sensor: palm down on a table, the pulses were ~2.5&times; weaker.</p>
+  </div>
+
+  <div class="panel" id="trendpanel">
+    <div class="trace-head"><span><b>Session</b> (last 10 min, one point per second)</span>
+      <button id="trendclear" style="padding: 2px 10px">Clear</button></div>
+    <div class="trend-head"><span><b style="color: var(--green)">Heart rate</b> (bpm)</span><span id="trendhr"></span></div>
+    <canvas class="trend" id="trhr"></canvas>
+    <div class="trend-head"><span><b style="color: var(--ir)">HRV</b> (RMSSD, ms)</span><span id="trendhrv"></span></div>
+    <canvas class="trend" id="trhrv"></canvas>
+    <div class="trend-head"><span><b style="color: var(--red)">SpO2</b> (%, experimental, SpO2 mode)</span><span id="trendspo2"></span></div>
+    <canvas class="trend" id="trspo2"></canvas>
+    <div class="trend-head"><span><b style="color: var(--accent)">Temperature</b> (estimate, experimental)
+      <button id="temptoggle" disabled style="padding: 2px 10px; margin-left: 6px">Start</button></span><span id="trendtemp"></span></div>
+    <div class="row small" style="margin: 4px 0; align-items: baseline; gap: 10px">
+      <span style="font-size: 26px; font-weight: 600; color: var(--text)" id="tempest">-- &deg;C</span>
+      <span>the ring is at <input id="calt" value="22" style="width: 44px"> &deg;C now
+        <button id="calset" disabled style="padding: 2px 10px">Set</button></span>
+      <span class="hint" style="margin: 0" id="calinfo"></span>
+    </div>
+    <canvas class="trend" id="trtemp"></canvas>
+    <p class="hint" style="margin: 4px 0">From the frequency of an oscillator inside the microcontroller (RC16M, measured
+      against the crystal every second): fewer counts when warmer, 5 to 8 counts per &deg;C depending on the ring. The
+      temperature of the ring itself, not of the skin. Each ring needs its own references: LibRing_6B, 0E, 06 and 57 come
+      calibrated (22 and 37 &deg;C); for another ring, "Set" adds a reference once the reading has settled at a known
+      temperature (kept in this browser), two references far apart give its slope.</p>
+  </div>
+
+  <div class="panel">
+    <details>
+      <summary>Advanced: registers, log</summary>
+
+      <h2>Registers (TYHX HX3918, hex)</h2>
+      <div class="row" style="margin-bottom:8px">
+        <button id="readall" disabled>Read from ring</button>
+        <button id="restart" disabled>Restart sensor (stock setup)</button>
+        <span class="hint" style="margin:0">Changing a value writes it right away.</span>
+      </div>
+      <div class="regs" id="regs"></div>
+
+      <h2>Any register</h2>
+      <div class="row small">
+        reg 0x<input id="wreg" value="28"> = 0x<input id="wval" value="02">
+        <button id="write" disabled>Write</button>
+        &nbsp; read 0x<input id="rreg" value="00"> count <input id="rcount" value="16">
+        <button id="read" disabled>Read</button>
+      </div>
+      <div class="row small" style="margin-top:8px">
+        sweep reg 0x<input id="sreg" value="28"> from 0x<input id="sfrom" value="00">
+        to 0x<input id="sto" value="40"> step <input id="sstep" value="8"> every
+        <input id="sdelay" value="1000"> ms
+        <button id="sweep" disabled>Sweep</button>
+      </div>
+
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </details>
+  </div>
+</main>
+
+<script type="module">
+import { drawSeries } from '../shared/plot.js';
+const SERVICE = '00112233-4455-6677-8899-aabbccddeeff';
+const PPG = 'e7da0718-b8b6-44b6-912c-e0bfb05d562d';
+const FS = 25;                 // samples per second and channel (stock setup)
+const WINDOW = FS * 10;        // 10 s on screen
+const FULL = 257700;           // LED channel ceiling (saturation)
+// HX3918 (chip ID 0x27): LED driver select of phase 2 in 0x2b bits 7:4 (LDR0 green,
+// LDR1 IR, LDR2 red on the SR08), LED current 0x28 (0-255 = 0-200 mA), on-time 0x1e
+const LEDS = {green: 0x10, red: 0x40, ir: 0x20};
+const REG_LED_CUR = 0x28, REG_ON_TIME = 0x1e;
+const CMD_AGC = 0xfc, CMD_LED = 0xfb;  // [0xFC, on], [0xFB, LED select]
+const REG_PERIOD_LO = 0x18, REG_PERIOD_HI = 0x19; // sample period: 32000 / Hz (0x0500: 25 Hz)
+const CMD_MODE = 0xfa, CMD_LEAK = 0xf9, CMD_LEAK_MEASURE = 0xf8; // [0xFA, 0 HR / 1 SpO2], [0xF9, red, IR (u16)], [0xF8]
+const HEADER = 35;                      // PPG_HEADER, ppg_read() in src/ppg/HX3918.h
+const AGC_STATES = ['manual', 'starting', 'setting current', 'setting offset', 'locked'];
+
+const REGS = [
+  [0x16, 'phase enable'], [0x17, 'oversampling'], [0x18, 'period [7:0]'], [0x19, 'period [15:8]'],
+  [0x1b, 'timing'], [0x1c, 'on-time ph0'], [0x1d, 'on-time ph1'], [0x1e, 'on-time ph2'], [0x1f, 'on-time ph3'],
+  [0x23, 'LED / DAC enables'], [0x24, 'int cap ph0/1'], [0x25, 'int cap ph2/3'],
+  [0x26, 'LED current ph0'], [0x27, 'LED current ph1'], [0x28, 'LED current ph2'], [0x29, 'LED current ph3'],
+  [0x2a, 'LED select ph0/1'], [0x2b, 'LED select ph2/3'],
+  [0x2c, 'DC cancel ph0'], [0x2d, 'DC cancel ph1'], [0x2e, 'DC cancel ph2'], [0x2f, 'DC cancel ph3'],
+  [0x3d, 'FIFO control'],
+];
+
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+let device = null, ppg = null, busy = Promise.resolve();
+const traces = [[], []];       // [other phase (SpO2 mode: dark), LED channel (green - dark)]
+const redT = [], irT = [];     // SpO2 mode: raw red and IR
+let lastDark = 0, leakCal = null;
+const LEAK_TIMEOUT_MS = 30000;  // the ring needs both channels settled for 3 s
+let ledCount = 0;              // LED channel samples received (absolute index for the beats)
+const hrv = {lastBeat: -1e9, prev: null, validFrom: 0, ibis: []};   // ibis: {t (ms), ibi (ms)}
+const trend = [];              // one point per second: {hr, rmssd, spo2} (NaN: none)
+const TREND_MAX = 600;         // 10 min
+// Temperature estimate from the RC16M count (fewer counts when warmer). References per
+// ring ("Set", kept in this browser): interpolated between them (exact at each, follows
+// the curvature), extended past the ends; with a single reference, the default slope.
+// LibRing_6B (2026-11-13): 3325 at ~7.5 C (outside), 3163 at 22 C (table), 2995 at 42 C
+// (laptop exhaust, air thermometer): 11.2 counts per C below 22 C, 8.4 above, 9.5 fitted;
+// checked 2026-11-14: 22.8 C (room 22) and 37.0 C (thermometer 37).
+// 0E, 06, 57 (2026-11-14, with 6B, all 4 together): table at 22 C, laptop exhaust at 37 C
+// (thermometer). Counts differ a lot between rings (2645-3157 at 22 C) and so do the slopes
+// (5.4-8.0 counts per C): one calibration per ring, 2 references to get its slope.
+const RC16_COUNTS_PER_C = 9.5;
+const RC16_DEFAULT_CAL = {
+  LibRing_6B: [{count: 3325, temp: 7.5}, {count: 3163, temp: 22}, {count: 2995, temp: 42}],
+  LibRing_0E: [{count: 3015, temp: 22}, {count: 2922, temp: 37}],
+  LibRing_06: [{count: 2645, temp: 22}, {count: 2563, temp: 37}],
+  LibRing_57: [{count: 2850, temp: 22}, {count: 2748, temp: 37}],
+};
+const tempTrend = [];          // estimate (C), one point per second
+let tempOn = false, rc16Smooth = null; // RC16M count, low-pass filtered (~5 s)
+let sampleCount = 0, rateT0 = 0;
+let led = 'green', current = 2, agcState = null;
+let recording = null;           // see Recorder
+
+function log(msg) {
+  if (recording && !recording.done) recording.log.push([performance.now() - recording.t0, msg]);
+  const el = $('log');
+  el.textContent += `${new Date().toLocaleTimeString()}  ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+function status(msg, cls = '') { const s = $('status'); s.textContent = msg; s.className = cls; }
+const hex = v => v.toString(16).padStart(2, '0');
+const parseHex = s => { const v = parseInt(s, 16); return Number.isInteger(v) && v >= 0 && v <= 255 ? v : null; };
+const ledColor = () => css(led === 'off' ? '--off' : `--${led}`);
+
+// GATT operations must not overlap: chain them
+function gatt(op) { busy = busy.then(op, op); return busy; }
+async function writeReg(reg, val) { await gatt(() => ppg.writeValueWithResponse(new Uint8Array([reg, val]))); }
+async function command(cmd, val) { await gatt(() => ppg.writeValueWithResponse(new Uint8Array([cmd, val]))); }
+// Temperature: [0xF1] -> [0xF1, status (0: fresh), RC16M count (2 bytes, little endian)]
+async function readTemperatureCount() {
+  return gatt(async () => {
+    await ppg.writeValueWithResponse(new Uint8Array([0xf1]));
+    await new Promise(r => setTimeout(r, 100));
+    const d = new DataView((await ppg.readValue()).buffer);
+    if (d.byteLength < 4 || d.getUint8(0) !== 0xf1) throw new Error('no temperature (firmware older than 2026-11-13?)');
+    return d.getUint8(1) === 0 ? d.getUint16(2, true) : null;
+  });
+}
+async function readRegs(reg, n) {
+  return gatt(async () => {
+    await ppg.writeValueWithResponse(new Uint8Array([0xfe, reg, n]));
+    await new Promise(r => setTimeout(r, 300)); // the ring holds notifications for 1 s
+    const v = new Uint8Array((await ppg.readValue()).buffer);
+    if (v.length !== 3 + n || v[0] !== 0xfe || v[1] !== reg) throw new Error('unexpected read result');
+    return Array.from(v.slice(3));
+  });
+}
+
+function onPacket(event) {
+  const d = new Uint8Array(event.target.value.buffer);
+  if (recording && !recording.done) recording.packets.push([Math.round(performance.now() - recording.t0), hexBytes(d)]);
+  // register read results also come here (readValue fires this event)
+  if (d.length < HEADER || d.length !== HEADER + 3 * d[1]) return;
+  const u24 = i => d[i] | (d[i + 1] << 8) | (d[i + 2] << 16);
+  const u16 = i => d[i] | (d[i + 1] << 8);
+  agcState = {current: d[3], ledDac: d[4], ambDac: d[5], state: d[6] & 15, led: d[6] >> 4,
+              rawLed: u24(7), rawAmb: u24(10), bpm: u16(13) / 10, conf: d[15],
+              fs: u16(16) / 100, motion: d[18],
+              mode: d[19] & 15, redLock: !!(d[19] & 0x10), irLock: !!(d[19] & 0x20), leakRunning: !!(d[19] & 0x80),
+              red: [d[20], d[21]], ir: [d[22], d[23]], spo2: u16(24) / 10, corr: d[26], ratio: u16(27) / 1000,
+              leak: [u16(29), u16(31)], dacCounts: u16(33) * 16};
+  const push = (t, v) => { t.push(v); if (t.length > WINDOW) t.shift(); };
+  for (let k = 0; k < d[1]; k++) {
+    const raw = u24(HEADER + 3 * k);
+    let v = raw & 0x1fffff;
+    if (v & 0x100000) v -= 0x200000;
+    const flag = (raw >> 21) & 3;
+    if (agcState.mode === 1) {  // SpO2 mode: flag = phase, 0 dark, 1 red, 2 green, 3 IR
+      if (flag === 0) { lastDark = v; push(traces[0], v); pushSpec(spec.dark, v); }
+      else if (flag === 1) { push(redT, v); pushSpec(spec.red, v); }
+      else if (flag === 3) { push(irT, v); pushSpec(spec.ir, v); }
+      else { push(traces[1], v - lastDark); sampleCount++; ledCount++; }
+    } else if (flag <= 1) {      // heart-rate mode: flag 1 = LED channel (green - dark)
+      push(traces[flag], v);
+      if (flag === 1) { sampleCount++; ledCount++; }
+    }
+  }
+  if (leakCal) leakStep();
+}
+
+// ---- signal processing ----
+function movingAverage(x, n) {
+  const out = new Array(x.length);
+  let s = 0;
+  for (let i = 0; i < x.length; i++) {
+    s += x[i];
+    if (i >= n) s -= x[i - n];
+    out[i] = s / Math.min(i + 1, n);
+  }
+  return out;
+}
+// Drift removal: subtract a centred 1.5 s moving average, then smooth (3 samples)
+function pulseOf(x) {
+  const n = Math.round(1.5 * FS), h = Math.floor(n / 2);
+  if (x.length < n + 4) return [];
+  const ma = movingAverage(x, n);
+  const ac = [];
+  for (let i = h; i < x.length - h; i++) ac.push(x[i] - ma[i + h]);
+  return movingAverage(ac, 3).slice(2);
+}
+// Heart rate by autocorrelation over the last 8 s: [bpm, r]
+function heartRate(ac) {
+  const x = ac.slice(-8 * FS);
+  if (x.length < 5 * FS) return [null, 0];
+  const m = x.reduce((a, b) => a + b, 0) / x.length;
+  const y = x.map(v => v - m);
+  const e = y.reduce((a, b) => a + b * b, 0) || 1;
+  let best = 0, lag = 0;
+  for (let L = Math.round(0.33 * FS); L <= Math.round(1.5 * FS); L++) {
+    let s = 0;
+    for (let i = 0; i + L < y.length; i++) s += y[i] * y[i + L];
+    const r = s / e * y.length / (y.length - L);
+    if (r > best) { best = r; lag = L; }
+  }
+  return lag ? [60 * FS / lag, best] : [null, 0];
+}
+
+// ---- heart rate variability (pure functions, also in apps/ppg/index.html) ----
+// Beats in x: {t: fractional sample index of the steepest edge, q: match with the
+// average pulse shape (correlation, 1 = same shape; deformed beats are unreliable)}.
+// x: LED channel samples (uniform rate fs). Drift removal (centred 1.5 s mean),
+// 3-sample smoothing, central derivative; its polarity is chosen so that the sharper
+// edge (the systolic one) is positive; local maxima above 40 % of its 95th
+// percentile, at least 0.33 s apart (180 bpm), refined by parabolic interpolation.
+function detectBeats(x, fs) {
+  const n = x.length, h = Math.round(0.75 * fs);
+  if (n < 2 * h + 8) return [];
+  const p = new Float64Array(n);
+  let sum = 0;
+  for (let i = 0; i <= 2 * h; i++) sum += x[i];
+  for (let i = h; i < n - h; i++) {
+    p[i] = x[i] - sum / (2 * h + 1);
+    if (i + h + 1 < n) sum += x[i + h + 1] - x[i - h];
+  }
+  const s = new Float64Array(n), d = new Float64Array(n);
+  for (let i = h + 1; i < n - h - 1; i++) s[i] = (p[i - 1] + p[i] + p[i + 1]) / 3;
+  let max = 0, min = 0;
+  for (let i = h + 2; i < n - h - 2; i++) {
+    d[i] = (s[i + 1] - s[i - 1]) / 2;
+    if (d[i] > max) max = d[i];
+    if (d[i] < min) min = d[i];
+  }
+  const sign = -min > max ? -1 : 1;
+  const lo = h + 3, hi = n - h - 3;
+  const vals = [];
+  for (let i = lo; i < hi; i++) { d[i] *= sign; vals.push(d[i]); }
+  if (vals.length < fs) return [];
+  vals.sort((a, b) => a - b);
+  const thr = 0.4 * vals[Math.floor(0.95 * (vals.length - 1))];
+  const minGap = 0.33 * fs, beats = [];
+  for (let i = lo; i < hi; i++) {
+    if (d[i] <= thr || d[i] < d[i - 1] || d[i] < d[i + 1]) continue;
+    const den = d[i - 1] - 2 * d[i] + d[i + 1];
+    let t = i + (den < 0 ? 0.5 * (d[i - 1] - d[i + 1]) / den : 0);
+    const last = beats[beats.length - 1];
+    if (last && t - last.t < minGap) {
+      if (d[i] > last.v) { last.t = t; last.v = d[i]; }
+      continue;
+    }
+    beats.push({t, v: d[i]});
+  }
+  return refineBeats(s, beats.map(b => b.t), fs, lo, hi);
+}
+
+// Sub-sample beat timing from the whole pulse shape: average the pulses around the
+// beats (template), then shift each beat to the best match with it (cross-correlation
+// over +-3 samples, parabolic interpolation), twice. Uses ~0.6 s of signal per beat
+// instead of the 2-3 samples of the steepest edge: ~3x less timing noise.
+function refineBeats(s, beats, fs, lo, hi) {
+  const a = Math.round(0.25 * fs), b = Math.round(0.35 * fs), L = 3;
+  const sample = t => { const i = Math.floor(t), f = t - i; return s[i] * (1 - f) + s[i + 1] * f; };
+  let quality = beats.map(() => 0);
+  for (let pass = 0; pass < 2; pass++) {
+    const tpl = new Float64Array(a + b + 1);
+    let count = 0;
+    for (const t of beats) {
+      if (t - a - L < lo || t + b + L + 1 >= hi) continue;
+      for (let k = -a; k <= b; k++) tpl[k + a] += sample(t + k);
+      count++;
+    }
+    if (count < 3) return beats.map(t => ({t, q: 0}));
+    const mean = tpl.reduce((x, y) => x + y, 0) / tpl.length;
+    let tplNorm = 0;
+    for (let k = 0; k < tpl.length; k++) { tpl[k] -= mean; tplNorm += tpl[k] * tpl[k]; }
+    quality = [];
+    beats = beats.map(t => {
+      if (t - a - L < lo || t + b + L + 1 >= hi) { quality.push(0); return t; }
+      const c = [];
+      for (let lag = -L; lag <= L; lag++) {
+        let sum = 0;
+        for (let k = -a; k <= b; k++) sum += tpl[k + a] * sample(t + lag + k);
+        c.push(sum);
+      }
+      let j = 1;
+      for (let q = 1; q < c.length - 1; q++) if (c[q] > c[j]) j = q;
+      const den = c[j - 1] - 2 * c[j] + c[j + 1];
+      const delta = den < 0 ? 0.5 * (c[j - 1] - c[j + 1]) / den : 0;
+      const tb = t + (j - L) + Math.max(-0.5, Math.min(0.5, delta));
+      // shape match at the new position: correlation with the template
+      let sm = 0, ss = 0, st = 0;
+      for (let k = -a; k <= b; k++) sm += sample(tb + k);
+      sm /= a + b + 1;
+      for (let k = -a; k <= b; k++) { const v = sample(tb + k) - sm; ss += v * v; st += v * tpl[k + a]; }
+      quality.push(ss > 0 && tplNorm > 0 ? st / Math.sqrt(ss * tplNorm) : 0);
+      return tb;
+    });
+  }
+  return beats.map((t, i) => ({t, q: quality[i]}));
+}
+
+// RMSSD, SDNN (ms), mean heart rate and pNN50 of inter-beat intervals (ms)
+function hrvStats(ibi) {
+  const n = ibi.length;
+  if (n < 2) return null;
+  const mean = ibi.reduce((a, b) => a + b, 0) / n;
+  const sdnn = Math.sqrt(ibi.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1));
+  let ss = 0, nn50 = 0;
+  for (let i = 1; i < n; i++) { const dd = ibi[i] - ibi[i - 1]; ss += dd * dd; if (Math.abs(dd) > 50) nn50++; }
+  return {rmssd: Math.sqrt(ss / (n - 1)), sdnn, bpm: 60000 / mean, pnn50: 100 * nn50 / (n - 1), n};
+}
+
+// Interval accepted: physiological (40-180 bpm) and within 20 % of the median of the
+// recent ones, or of `expected` (e.g. from the ring's heart rate) while there are < 4
+function ibiPlausible(ibi, recent, expected) {
+  if (ibi < 333 || ibi > 1500) return false;
+  const m = recent.length >= 4
+    ? recent.slice(-8).sort((a, b) => a - b)[Math.floor(Math.min(recent.length, 8) / 2)] : expected;
+  return !m || Math.abs(ibi - m) < 0.2 * m;
+}
+// ---- end of heart rate variability ----
+
+// Every second: new beats of the last 10 s of the LED channel -> intervals. Only with a
+// clear pulse (the ring reports a heart rate) and a still hand: otherwise the chain of
+// beats is cut (no interval across a gap)
+function updateHrv() {
+  const a = agcState, x = traces[1];
+  const fs = a && a.fs > 5 ? a.fs : FS;
+  if (!ppg || !a || led === 'off' || !a.bpm || a.motion > 25 || x.length < 8 * FS) {
+    hrv.prev = null;
+    hrv.validFrom = ledCount + fs; // the window still holds these samples: skip them
+    return;
+  }
+  const base = ledCount - x.length, now = performance.now();
+  for (const {t: b, q} of detectBeats(x, fs)) {
+    const t = base + b;
+    // away from the window edges (no shape match there), after the last beat
+    if (b < 1.6 * fs || b > x.length - 1.6 * fs || t < hrv.lastBeat + 0.3 * fs || t < hrv.validFrom) continue;
+    hrv.lastBeat = t;
+    if (q < 0.97) { hrv.prev = null; continue; }  // deformed beat: unreliable timing
+    if (hrv.prev !== null) {
+      const ibi = (t - hrv.prev) / fs * 1000;
+      if (ibiPlausible(ibi, hrv.ibis.slice(-8).map(e => e.ibi), 60000 / a.bpm)) hrv.ibis.push({t: now, ibi});
+    }
+    hrv.prev = t;
+  }
+  while (hrv.ibis.length && hrv.ibis[0].t < now - 300000) hrv.ibis.shift();
+}
+function hrvNow() {
+  const now = performance.now();
+  return hrvStats(hrv.ibis.filter(e => e.t > now - 60000).map(e => e.ibi));
+}
+function updateTrend() {
+  const a = agcState, st = hrvNow();
+  trend.push({hr: a && a.bpm && a.motion <= 25 ? a.bpm : NaN,
+              rmssd: st && st.n >= 20 ? st.rmssd : NaN,
+              spo2: a && a.mode === 1 && a.spo2 ? a.spo2 : NaN});
+  if (trend.length > TREND_MAX) trend.shift();
+}
+
+// ---- drawing: apps/shared/plot.js ----
+
+function renderHrv() {
+  const st = hrvNow();
+  const recent = hrv.ibis.slice(-120).map(e => e.ibi);
+  drawSeries($('ctacho'), recent, css('--ir'), {span: 120, width: 1.8, labels: true});
+  $('hrvcount').textContent = recent.length ? `${recent.length} intervals` : '';
+  const enough = st && st.n >= 20;
+  $('rmssd').textContent = enough ? Math.round(st.rmssd) : '--';
+  $('sdnn').textContent = enough ? `${Math.round(st.sdnn)} ms` : '--';
+  $('hrvbpm').textContent = st ? `${st.bpm.toFixed(1)}` : '--';
+  $('pnn50').textContent = enough ? `${Math.round(st.pnn50)} %` : '--';
+  $('hrvn').textContent = st ? st.n + 1 : '--';
+  const a = agcState;
+  $('hrvinfo').textContent = !ppg ? 'Connect, then wear the ring'
+    : a && a.motion > 25 ? 'Moving: keep the hand still'
+    : !a || !a.bpm ? 'Waiting for a clear pulse'
+    : enough ? 'last minute' : `Collecting beats (${st ? st.n : 0} / 20)…`;
+  const fmt1 = v => v.toFixed(1);
+  const show = (id, canvas, key, color, fmt, unit) => {
+    const r = drawSeries($(canvas), trend.map(p => p[key]), css(color), {span: TREND_MAX, width: 1.8, labels: true, format: fmt});
+    $(id).textContent = r ? `now ${fmt(r.last)} ${unit} · range ${fmt(r.min)}-${fmt(r.max)}` : '';
+  };
+  show('trendhr', 'trhr', 'hr', '--green', fmt1, 'bpm');
+  show('trendhrv', 'trhrv', 'rmssd', '--ir', v => v.toFixed(0), 'ms');
+  show('trendspo2', 'trspo2', 'spo2', '--red', fmt1, '%');
+}
+
+let lastBeat = 0;
+function render() {
+  const color = ledColor();
+  document.documentElement.style.setProperty('--led', color);
+  const raw = traces[1];
+  const ac = pulseOf(raw);
+  drawSeries($('cpulse'), ac, color, {width: 2.2, span: WINDOW - Math.round(1.5 * FS)});
+  drawSeries($('craw'), raw, color, {span: WINDOW});
+
+  if (raw.length) {
+    const last = raw.slice(-FS);
+    const mean = last.reduce((a, b) => a + b, 0) / last.length;
+    $('level').style.width = `${Math.max(0, Math.min(100, 100 * mean / FULL))}%`;
+    $('rawinfo').textContent = `${Math.round(mean)}`;
+    const sat = Math.max(...last) > FULL * 0.97;
+    const [appBpm, appR] = heartRate(ac);
+    // The ring computes the heart rate: 0 without a clear pulse (confidence < 50), while
+    // the hand moves (> 200 mg) and for 5 s after (its samples are dropped). The app's own
+    // estimate is only a cross-check (or the value, without ring data)
+    const ring = agcState && agcState.fs > 0;
+    const scale = agcState ? agcState.fs / FS : 1;
+    const bpm = ring ? agcState.bpm : appBpm * scale;
+    const r = ring ? agcState.conf / 100 : appR;
+    const moving = ring && agcState.motion > 25;  // > 200 mg: at rest <= ~100 mg (noise), a hand move >= ~400 mg
+    const conf = $('conf');
+    const check = appBpm ? ` (app: ${(appBpm * scale).toFixed(0)})` : '';
+    if (led === 'off') { $('bpm').textContent = '--'; conf.textContent = 'LED off'; }
+    else if (sat) { $('bpm').textContent = '--'; conf.textContent = 'Saturated: lower the brightness'; }
+    else if (moving) { $('bpm').textContent = '--'; conf.textContent = 'Moving: keep the hand still'; }
+    else if (bpm && (ring || r > 0.45)) {
+      $('bpm').textContent = Math.round(bpm);
+      conf.textContent = `${ring ? 'ring' : 'app'} confidence ${(r * 100).toFixed(0)}%${check}`;
+      // beat the heart once per period
+      const now = performance.now();
+      if (now - lastBeat > 60000 / bpm) {
+        lastBeat = now;
+        $('heart').style.transform = 'scale(1.35)';
+        setTimeout(() => { $('heart').style.transform = ''; }, 140);
+      }
+    } else {
+      $('bpm').textContent = '--';
+      conf.textContent = (ring ? agcState.conf === 0 : raw.length < 6 * FS) ? 'Measuring…'
+        : `No clear pulse (confidence ${(r * 100).toFixed(0)}%): keep still, ring snug on the finger`;
+    }
+    if (ac.length) {
+      const recent = ac.slice(-4 * FS);
+      $('pulseinfo').textContent = `amplitude ${Math.round(Math.max(...recent) - Math.min(...recent))}`;
+    }
+  }
+  if (agcState) {
+    const a = agcState;
+    $('agcinfo').textContent = `Ring: ${AGC_STATES[a.state] || a.state}, current ${a.current} ` +
+      `(${(a.current * 200 / 255).toFixed(1)} mA), LED offset ${a.ledDac}, ambient offset ${a.ambDac}, ` +
+      `raw LED ${a.rawLed}, raw ambient ${a.rawAmb}, sample rate ${a.fs.toFixed(2)} Hz, motion ${a.motion * 8} mg`;
+    if (a.state && current !== a.current) { current = a.current; showLed(); }
+  }
+  renderSpo2();
+  renderHrv();
+
+  const now = performance.now();
+  if (ppg && now - rateT0 > 2000) {
+    $('rate').textContent = `${(sampleCount / ((now - rateT0) / 1000)).toFixed(1)} samples/s per channel`;
+    sampleCount = 0; rateT0 = now;
+  }
+  requestAnimationFrame(render);
+}
+
+
+function renderSpo2() {
+  const a = agcState;
+  if (!a || a.mode !== 1) {
+    $('spo2').textContent = '--';
+    $('spo2info').textContent = $('spo2on').checked && ppg ? 'Starting…' : 'Off';
+    $('spo2detail').textContent = ''; $('spo2corr').textContent = '';
+    drawSeries($('cspo2'), [], css('--red'));
+    return;
+  }
+  const span = WINDOW - Math.round(1.5 * FS);
+  drawSeries($('cspo2'), pulseOf(redT), css('--red'), {span, width: 1.8});
+  drawSeries($('cspo2'), pulseOf(irT), css('--ir'), {span, width: 1.8, overlay: true});
+  $('spo2corr').textContent = a.ratio ? `correlation ${a.corr} %` : '';
+  const noLeak = !a.leak[0] && !a.leak[1];
+  let info;
+  if (a.leakRunning || leakCal) info = 'Measuring the light leak: keep the ring off the finger, in the dark…';
+  else if ((!a.redLock || !a.irLock) && !$('auto').checked) info = 'Turn Auto on: the ring adjusts red / IR only with it';
+  else if (!a.redLock || !a.irLock) info = 'Adjusting red / IR…';
+  else if (a.motion > 25) info = 'Moving: keep the hand still';
+  else if (!a.ratio) info = 'Measuring…';
+  else if (!a.spo2) info = `Red and IR pulses don't match (${a.corr} %): keep still, ring snug`;
+  else info = `uncalibrated estimate${noLeak ? ', leak not calibrated' : ''}`;
+  $('spo2').textContent = a.spo2 && !a.leakRunning ? Math.round(a.spo2) : '--';
+  $('spo2info').textContent = info;
+  const led = (c, pulse) => `${c} (${mA(c)} mA), ${2 * pulse} µs pulses`;
+  $('spo2detail').textContent = `R ${a.ratio.toFixed(3)} · red ${led(a.red[0], spo2Pulse.red)}, offset ${a.red[1]} · ` +
+    `IR ${led(a.ir[0], spo2Pulse.ir)}, offset ${a.ir[1]} · ${a.dacCounts} counts per offset step · ` +
+    `leak red ${a.leak[0] * 16} IR ${a.leak[1] * 16} counts per current unit${noLeak ? ' (not calibrated)' : ''}`;
+}
+
+// ---- SpO2 mode and leak calibration (kept per ring name in this browser) ----
+// per ring and red / IR pulse lengths (the leak per current unit depends on them)
+const leakKey = () => `libring-leak-${device ? device.name : ''}-p${$('redpulse').value}-${$('irpulse').value}`;
+function loadLeak() { try { return JSON.parse(localStorage.getItem(leakKey())); } catch (e) { return null; } }
+function saveLeak(l) { try { localStorage.setItem(leakKey(), JSON.stringify(l)); } catch (e) { /* private mode */ } }
+async function sendLeak() {
+  if (!ppg) return;
+  const l = loadLeak() || {red: 0, ir: 0};  // 0: not calibrated (for these pulse lengths)
+  await gatt(() => ppg.writeValueWithResponse(new Uint8Array([CMD_LEAK, l.red & 255, l.red >> 8, l.ir & 255, l.ir >> 8])));
+  log(l.red || l.ir ? `light leak sent: red ${l.red * 16}, IR ${l.ir * 16} counts per current unit`
+                    : 'light leak not calibrated for this ring and these pulse lengths');
+}
+async function setSpo2(on) {
+  if (!ppg) return;
+  traces[0].length = traces[1].length = redT.length = irT.length = 0;
+  spec.red.length = spec.ir.length = spec.dark.length = 0;
+  hrv.prev = null;
+  await command(CMD_MODE, on ? 1 : 0);  // restarts the ring's gain control
+  if (on) { await sendLeak(); await sendSpo2Currents(); await sendSpo2Pulses(false); await keepSpo2Ir(); }
+  log(`SpO2 mode ${on ? 'on' : 'off'}`);
+}
+// Red / IR brightness ([0xF7, red, IR]; the ring halves or doubles it when its offset DAC runs out)
+// and pulse length (on-time of phase 1 = red 0x1d, phase 3 = IR 0x1f), sent at each SpO2 start
+// (the firmware default changed: 128 us up to V0.3). Default 32 (25 mA) with 64 us: the cleanest
+// pulses in a sweep on 5 rings.
+const REG_PULSE = {red: 0x1d, ir: 0x1f};
+const spo2Pulse = {red: 32, ir: 32};
+const mA = c => (c * 200 / 255).toFixed(1);
+function showSpo2Currents() {
+  for (const ch of ['red', 'ir']) $(ch + 'curv').textContent = `${$(ch + 'cur').value} (${mA($(ch + 'cur').value)} mA)`;
+}
+async function sendSpo2Currents() {
+  if (!ppg || !$('spo2on').checked) return;
+  await gatt(() => ppg.writeValueWithResponse(new Uint8Array([0xf7, +$('redcur').value, +$('ircur').value])));
+}
+async function sendSpo2Pulses(changed) {
+  if (!ppg || !$('spo2on').checked) return;
+  for (const ch of ['red', 'ir']) {
+    spo2Pulse[ch] = parseInt($(ch + 'pulse').value, 10);
+    await writeReg(REG_PULSE[ch], spo2Pulse[ch]);
+  }
+  if (changed) log(`SpO2 pulses: red ${2 * spo2Pulse.red} µs, IR ${2 * spo2Pulse.ir} µs (the light leak is kept per pulse length)`);
+  if (changed) await sendLeak();
+}
+async function startLeakCal() {
+  if (!ppg) return;
+  if (!$('spo2on').checked) { $('spo2on').checked = true; await setSpo2(true); }
+  if (!$('auto').checked) {  // the ring adjusts the red / IR offsets only with its gain control on
+    $('auto').checked = true;
+    await command(CMD_AGC, 1);
+    log('Auto turned on (needed to adjust red / IR)');
+  }
+  await gatt(() => ppg.writeValueWithResponse(new Uint8Array([CMD_LEAK_MEASURE])));
+  leakCal = {t0: performance.now(), seen: false};
+  $('leakcal').disabled = true;
+  log('measuring the light leak (ring off the finger, in the dark)');
+}
+function leakStep() {
+  const a = agcState;
+  const late = performance.now() - leakCal.t0 > LEAK_TIMEOUT_MS;
+  if (a.leakRunning && !late) { leakCal.seen = true; return; }
+  if (leakCal.seen && !a.leakRunning && (a.leak[0] || a.leak[1])) {
+    saveLeak({red: a.leak[0], ir: a.leak[1]});
+    log(`light leak measured and saved for ${device.name}: red ${a.leak[0] * 16}, IR ${a.leak[1] * 16} counts per current unit`);
+  } else if (!late) {
+    return;
+  } else {
+    const unlocked = [!a.redLock && 'red', !a.irLock && 'IR'].filter(Boolean).join(' and ');
+    log(`light leak measurement failed${unlocked ? ` (${unlocked} not settled: ring off the finger, still, in the dark?)` : ''}`);
+    const l = loadLeak() || {red: 0, ir: 0};  // stops the ring's measurement, keeps the previous leak
+    gatt(() => ppg.writeValueWithResponse(new Uint8Array([CMD_LEAK, l.red & 255, l.red >> 8, l.ir & 255, l.ir >> 8])))
+      .catch(e => log(e.message));
+  }
+  leakCal = null;
+  $('leakcal').disabled = !ppg;
+}
+
+// ---- LED control ----
+function showLed() {
+  document.querySelectorAll('.led-btn').forEach(b => b.classList.toggle('active', b.dataset.led === led));
+  $('current').value = current;
+  $('currentv').textContent = `${current} (${(current * 200 / 255).toFixed(1)} mA)`;
+}
+async function setCurrent(c, why = '') {
+  current = c;
+  showLed();
+  if (ppg && led !== 'off') {
+    await writeReg(REG_LED_CUR, c);
+    if (why) log(`${why}: LED current 0x28 = ${c}`);
+  }
+}
+async function setLed(name) {
+  led = name;
+  showLed();
+  if (!ppg) return;
+  traces[1].length = 0;
+  await command(CMD_LED, name === 'off' ? 0 : LEDS[name]);  // restarts the ring's AGC
+  if (name !== 'off' && !$('auto').checked) await writeReg(REG_LED_CUR, current);
+  await keepSpo2Ir();
+  log(`LED ${name}`);
+}
+// Firmware up to V0.3: with the LED off, the SpO2 mode lost its IR (LED select of phase 3,
+// register 0x2b bits 3:0, not written). Phase 2 off + phase 3 IR:
+const REG_LED_SEL = 0x2b, LED_SEL_IR_PHASE3 = 0x02;
+async function keepSpo2Ir() {
+  if (ppg && led === 'off' && $('spo2on').checked) await writeReg(REG_LED_SEL, LED_SEL_IR_PHASE3);
+}
+
+// ---- registers ----
+function buildRegs() {
+  const box = $('regs');
+  for (const [r, name] of REGS) {
+    const div = document.createElement('div');
+    div.className = 'reg';
+    div.innerHTML = `<label><code>0x${hex(r)}</code> ${name}</label><input id="r${hex(r)}" placeholder="--">`;
+    box.appendChild(div);
+    const input = div.querySelector('input');
+    input.addEventListener('change', async () => {
+      const v = parseHex(input.value);
+      if (v === null || !ppg) return;
+      try { await writeReg(r, v); input.classList.add('changed'); log(`write 0x${hex(r)} = 0x${hex(v)}`); }
+      catch (e) { log(`write failed: ${e.message}`); }
+    });
+  }
+}
+async function readAll() {
+  const chunks = [];
+  for (const [r] of REGS) {
+    const last = chunks[chunks.length - 1];
+    if (last && r === last[0] + last[1] && last[1] < 16) last[1]++;
+    else chunks.push([r, 1]);
+  }
+  try {
+    for (const [reg, n] of chunks) {
+      const vals = await readRegs(reg, n);
+      vals.forEach((v, i) => {
+        const input = $(`r${hex(reg + i)}`);
+        if (input) { input.value = hex(v); input.classList.remove('changed'); }
+      });
+    }
+    log('registers read');
+  } catch (e) { log(`read failed: ${e.message}`); }
+}
+
+// ---- connection ----
+async function startSensor() {
+  traces[0].length = traces[1].length = 0;
+  await gatt(() => ppg.startNotifications()); // subscribing starts the sensor (stock setup)
+  rateT0 = performance.now(); sampleCount = 0;
+  await command(CMD_AGC, $('auto').checked ? 1 : 0);
+  if (!$('auto').checked) await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
+  await setLed(led);
+  if ($('spo2on').checked) await setSpo2(true);  // each start is in heart-rate mode
+}
+async function restart() {
+  await gatt(() => ppg.stopNotifications());
+  await new Promise(r => setTimeout(r, 300));
+  await startSensor();
+  log('sensor restarted');
+}
+// Camera check: the selected LED at maximum for 6 s, visible through a phone camera
+// (normally 25 short pulses per second, ~0.3 % of the time: too dim for IR), then the
+// previous settings again
+async function ledCheck() {
+  if (!ppg || led === 'off') { log('select a LED first'); return; }
+  $('ledcheck').disabled = true;
+  try {
+    await command(CMD_AGC, 0);
+    await command(CMD_LED, LEDS[led]);
+    await writeReg(REG_LED_CUR, 255);
+    await writeReg(REG_ON_TIME, 255);                       // 510 us pulses
+    await writeReg(REG_PERIOD_LO, 0x40); await writeReg(REG_PERIOD_HI, 0x01); // 320: 100 Hz
+    log(`camera check: ${led} at maximum for 6 s`);
+    await new Promise(r => setTimeout(r, 6000));
+  } finally {
+    if (ppg) {
+      await writeReg(REG_PERIOD_LO, 0x00); await writeReg(REG_PERIOD_HI, 0x05);  // 25 Hz
+      if (!$('auto').checked) await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
+      await command(CMD_AGC, $('auto').checked ? 1 : 0);
+      await setLed(led);  // restarts the ring's AGC (or sets the manual current)
+      log('camera check done');
+    }
+    $('ledcheck').disabled = !ppg;
+  }
+}
+
+function setConnected(on) {
+  for (const id of ['disconnect', 'restart', 'readall', 'write', 'read', 'sweep', 'leakcal', 'ledcheck', 'temptoggle', 'calset']) $(id).disabled = !on;
+  if (!on && tempOn) { tempOn = false; $('temptoggle').textContent = 'Start'; }
+  $('connect').disabled = on;
+}
+let pendingDevice = null; // the last ring, for the next connect() (automatic connection)
+async function connect() {
+  try {
+    if (pendingDevice) { device = pendingDevice; pendingDevice = null; } // no chooser
+    else {
+      status('Choose the ring…');
+      device = await navigator.bluetooth.requestDevice({filters: [{namePrefix: 'LibRing'}], optionalServices: [SERVICE]});
+    }
+    device.addEventListener('gattserverdisconnected', () => {
+      ppg = null; setConnected(false); status('Disconnected', 'err'); log('disconnected');
+    });
+    status(`Connecting to ${device.name}…`);
+    const server = await libringLastRing.gattConnect(device);
+    const service = await server.getPrimaryService(SERVICE);
+    try { ppg = await service.getCharacteristic(PPG); }
+    catch (e) { throw new Error('this ring has no PPG characteristic: flash the latest firmware'); }
+    ppg.addEventListener('characteristicvaluechanged', onPacket);
+    await startSensor();
+    setConnected(true);
+    status(`Connected to ${device.name}`, 'ok');
+    log(`connected to ${device.name}`);
+    libringLastRing.remember(device);
+  } catch (e) {
+    status(e.message, 'err');
+    log(`connect failed: ${e.message}`);
+  }
+}
+
+async function sweep() {
+  const reg = parseHex($('sreg').value), from = parseHex($('sfrom').value), to = parseHex($('sto').value);
+  const step = Math.max(1, parseInt($('sstep').value, 10) || 1);
+  const delay = Math.max(200, parseInt($('sdelay').value, 10) || 1000);
+  if (reg === null || from === null || to === null) return;
+  $('sweep').disabled = true;
+  try {
+    for (let v = from; from <= to ? v <= to : v >= to; v += from <= to ? step : -step) {
+      await writeReg(reg, v);
+      log(`sweep 0x${hex(reg)} = 0x${hex(v)}`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  } catch (e) { log(`sweep stopped: ${e.message}`); }
+  $('sweep').disabled = !ppg;
+}
+
+// ---- wiring ----
+$('connect').onclick = connect;
+// the last ring, if the browser still allows it; released when leaving / reloading
+libringLastRing.autoConnect(d => { pendingDevice = d; connect(); });
+libringLastRing.releaseOnLeave(() => device);
+$('disconnect').onclick = () => device && device.gatt.disconnect();
+$('restart').onclick = restart;
+$('readall').onclick = readAll;
+document.querySelectorAll('.led-btn').forEach(b => { b.onclick = () => setLed(b.dataset.led).catch(e => log(e.message)); });
+$('ledcheck').onclick = () => ledCheck().catch(e => log(`camera check: ${e.message}`));
+$('current').oninput = async () => {
+  if ($('auto').checked) { $('auto').checked = false; if (ppg) await command(CMD_AGC, 0); }
+  setCurrent(parseInt($('current').value, 10), 'manual').catch(e => log(e.message));
+};
+$('auto').onchange = () => ppg && command(CMD_AGC, $('auto').checked ? 1 : 0)
+  .then(() => log(`ring AGC ${$('auto').checked ? 'on' : 'off'}`)).catch(e => log(e.message));
+$('ontime').onchange = async () => {
+  if (!ppg) return;
+  if ($('auto').checked) { $('auto').checked = false; await command(CMD_AGC, 0); }
+  await writeReg(REG_ON_TIME, parseInt($('ontime').value, 10));
+  log(`on-time 0x1e = ${$('ontime').value} (manual)`);
+};
+$('write').onclick = async () => {
+  const r = parseHex($('wreg').value), v = parseHex($('wval').value);
+  if (r === null || v === null) return;
+  try { await writeReg(r, v); log(`write 0x${hex(r)} = 0x${hex(v)}`); } catch (e) { log(`write failed: ${e.message}`); }
+};
+$('read').onclick = async () => {
+  const r = parseHex($('rreg').value), n = Math.min(16, Math.max(1, parseInt($('rcount').value, 10) || 1));
+  if (r === null) return;
+  try { log(`read 0x${hex(r)}..: ${(await readRegs(r, n)).map(hex).join(' ')}`); } catch (e) { log(`read failed: ${e.message}`); }
+};
+$('sweep').onclick = sweep;
+for (const ch of ['red', 'ir']) {
+  $(ch + 'cur').oninput = showSpo2Currents;
+  $(ch + 'cur').onchange = () => sendSpo2Currents()
+    .then(() => log(`SpO2 brightness: red ${$('redcur').value}, IR ${$('ircur').value}`)).catch(e => log(e.message));
+  $(ch + 'pulse').onchange = () => sendSpo2Pulses(true).catch(e => log(e.message));
+}
+showSpo2Currents();
+$('spo2on').onchange = () => setSpo2($('spo2on').checked).catch(e => log(e.message));
+$('leakcal').onclick = () => startLeakCal().catch(e => log(e.message));
+$('trendclear').onclick = () => { trend.length = 0; hrv.ibis.length = 0; hrv.prev = null;
+  tempTrend.length = 0; rc16Smooth = null; renderTemperature(); };
+
+// ---- temperature (experimental) ----
+const calKey = () => `libring-rc16cal-${device ? device.name : ''}`;
+function loadCal() { // [{count, temp}, ...] or null
+  try { const c = JSON.parse(localStorage.getItem(calKey())); if (c) return c; } catch (e) { /* private mode */ }
+  return device ? RC16_DEFAULT_CAL[device.name] || null : null;
+}
+function calPoints(cal) { // sorted by count, without pairs too close to give a slope
+  const pts = [...cal].sort((a, b) => a.count - b.count);
+  return pts.filter((p, i) => i === 0 || p.count - pts[i - 1].count >= 10);
+}
+function estimate(count, cal = loadCal()) {
+  if (!cal || !cal.length || count == null) return NaN;
+  const pts = calPoints(cal);
+  if (pts.length === 1) return pts[0].temp + (pts[0].count - count) / RC16_COUNTS_PER_C;
+  let i = pts.findIndex(p => p.count >= count); // segment [i - 1, i], ends extended
+  i = i <= 0 ? 1 : i;
+  const a = pts[i - 1], b = pts[i];
+  return a.temp + (count - a.count) * (b.temp - a.temp) / (b.count - a.count);
+}
+$('temptoggle').onclick = async () => {
+  tempOn = !tempOn;
+  $('temptoggle').textContent = tempOn ? 'Stop' : 'Start';
+  while (tempOn && ppg) {
+    const t0 = performance.now();
+    try {
+      const count = await readTemperatureCount();
+      if (count != null) rc16Smooth = rc16Smooth == null ? count : rc16Smooth + 0.2 * (count - rc16Smooth);
+      tempTrend.push(estimate(rc16Smooth));
+      if (tempTrend.length > TREND_MAX) tempTrend.shift();
+      renderTemperature();
+    } catch (e) { log(`temperature: ${e.message}`); tempOn = false; $('temptoggle').textContent = 'Start'; }
+    await new Promise(res => setTimeout(res, Math.max(0, 1000 - (performance.now() - t0))));
+  }
+};
+$('calset').onclick = () => {
+  const t = parseFloat($('calt').value);
+  if (!device || rc16Smooth == null || !Number.isFinite(t)) { log('temperature reference: press Start first'); return; }
+  const cal = (loadCal() || []).filter(p => Math.abs(p.temp - t) >= 3); // replaces one within 3 C
+  cal.push({count: Math.round(rc16Smooth), temp: t});
+  try { localStorage.setItem(calKey(), JSON.stringify(cal)); } catch (e) { /* private mode */ }
+  log(`temperature reference for ${device.name}: ${Math.round(rc16Smooth)} counts = ${t} °C`);
+  renderTemperature();
+};
+function renderTemperature() {
+  const fmt = v => v.toFixed(1);
+  const r = drawSeries($('trtemp'), tempTrend, css('--accent'), {span: TREND_MAX, width: 1.8, labels: true, format: fmt});
+  const cal = loadCal(), est = estimate(rc16Smooth, cal);
+  $('tempest').textContent = Number.isFinite(est) ? `≈ ${est.toFixed(1)} °C` : '-- °C';
+  $('trendtemp').textContent = r ? `range ${fmt(r.min)}-${fmt(r.max)} °C` +
+    (rc16Smooth != null ? ` · RC16M ${Math.round(rc16Smooth)}` : '') : '';
+  const pts = cal ? calPoints(cal) : [];
+  const slopes = pts.slice(1).map((b, i) => (pts[i].count - b.count) / (b.temp - pts[i].temp));
+  $('calinfo').textContent = !device ? '' : cal ? `${device.name}: ` + pts.map(p => `${p.count} = ${p.temp} °C`).join(', ') +
+    (slopes.length ? ` (${slopes.map(k => k.toFixed(1)).join(' / ')} counts per °C)` : ` (default ${RC16_COUNTS_PER_C} counts per °C)`) :
+    `not calibrated yet for ${device.name}: leave it a few minutes at a known temperature, then Set`;
+}
+// ---- Recorder (raw packets, settings, labels) ----
+const hexBytes = a => Array.from(a, hex).join('');
+function settings() {
+  return {led, auto: $('auto').checked, current: $('current').value, ontime: $('ontime').value,
+          spo2: $('spo2on').checked, redcur: $('redcur').value, ircur: $('ircur').value,
+          redpulse: $('redpulse').value, irpulse: $('irpulse').value, ring: device ? device.name : null};
+}
+// A label judges the whole window on screen: [from, to] in ms since the start of the recording
+const LABEL_WINDOW_MS = WINDOW / FS * 1000;
+function label(kind) {
+  if (!recording || recording.done) return;
+  const t = Math.round(performance.now() - recording.t0);
+  recording.labels.push({from: Math.max(0, t - LABEL_WINDOW_MS), to: t, label: kind, settings: settings()});
+  const n = k => recording.labels.filter(l => l.label === k).length;
+  $('recinfo').textContent = `last: ${kind} · good ${n('good')}, medium ${n('medium')}, bad ${n('bad')}`;
+}
+function toggleRecording() {
+  if (!recording) {
+    recording = {t0: performance.now(), start: new Date().toISOString(), packets: [], labels: [], log: [], settings: settings()};
+    $('rec').textContent = 'Stop';
+    $('recinfo').textContent = 'recording…';
+  } else {
+    recording.stop = new Date().toISOString();
+    recording.done = true;
+    $('rec').textContent = 'Record';
+    $('recinfo').textContent = `${recording.packets.length} packets, ${recording.labels.length} labels`;
+  }
+  const on = recording && !recording.done;
+  $('lgood').disabled = $('lmedium').disabled = $('lbad').disabled = !on;
+  $('recsave').disabled = !recording;
+}
+$('rec').onclick = () => { if (recording && recording.done) recording = null; toggleRecording(); };
+$('lgood').onclick = () => label('good');
+$('lmedium').onclick = () => label('medium');
+$('lbad').onclick = () => label('bad');
+document.addEventListener('keydown', e => {
+  if (!recording || recording.done || e.target.tagName === 'INPUT') return;
+  const k = {g: 'good', m: 'medium', b: 'bad'}[e.key.toLowerCase()];
+  if (k) label(k);
+});
+$('recsave').onclick = () => {
+  const blob = new Blob([JSON.stringify(recording)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ppg_${(device ? device.name : 'ring')}_${recording.start.replace(/[:.]/g, '-')}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+// ---- Spectral SpO2 (web app): red and IR amplitude at the heart rate over the last 20 s ----
+// The pulse is a narrow peak in the spectrum, the noise spreads over all frequencies: the
+// amplitude at the peak is much less sensitive to noise than the waveform.
+const SPEC_S = 20;
+const spec = {red: [], ir: [], dark: []};
+function pushSpec(t, v) { t.push(v); if (t.length > SPEC_S * FS) t.shift(); }
+function spectrum(x, fs) {
+  const n = x.length, t0 = (n - 1) / 2;
+  let sx = 0, sxt = 0, stt = 0;
+  for (let i = 0; i < n; i++) { sx += x[i]; sxt += x[i] * (i - t0); stt += (i - t0) ** 2; }
+  const m = sx / n, b = sxt / stt;
+  const y = x.map((v, i) => (v - m - b * (i - t0)) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1))));
+  const f = [], p = [];
+  for (let fr = 0.7; fr <= 3.5; fr += 0.02) {
+    let re = 0, im = 0;
+    const w = 2 * Math.PI * fr / fs;
+    for (let i = 0; i < n; i++) { re += y[i] * Math.cos(w * i); im -= y[i] * Math.sin(w * i); }
+    f.push(fr); p.push(re * re + im * im);
+  }
+  return {f, p};
+}
+function spectralSpo2() {
+  const a = agcState;
+  if (!a || a.mode !== 1 || !a.redLock || !a.irLock) return {msg: 'waiting for SpO2 mode (red / IR settled)'};
+  const n = Math.min(spec.red.length, spec.ir.length);
+  if (n < 12 * FS) return {msg: `collecting (${Math.round(n / FS)} / ${SPEC_S} s)`};
+  const fs = a.fs || FS;
+  const r = spectrum(spec.red.slice(-n), fs), i = spectrum(spec.ir.slice(-n), fs);
+  const med = q => [...q].sort((u, v) => u - v)[q.length >> 1] || 1;
+  const mr = med(r.p), mi = med(i.p);
+  let k = 0;
+  for (let j = 1; j < r.p.length; j++) if (r.p[j] / mr + i.p[j] / mi > r.p[k] / mr + i.p[k] / mi) k = j;
+  const amp = q => Math.sqrt(q.slice(Math.max(0, k - 5), k + 6).reduce((s, v) => s + v, 0)); // +-0.1 Hz
+  const qr = Math.sqrt(r.p[k] / mr), qi = Math.sqrt(i.p[k] / mi);  // peak / typical, amplitude
+  const dark = spec.dark.length ? spec.dark.reduce((s, v) => s + v, 0) / spec.dark.length : 0;
+  const mean = q => q.slice(-n).reduce((s, v) => s + v, 0) / n;
+  const dcR = mean(spec.red) + a.red[1] * a.dacCounts - dark - a.leak[0] * 16 * a.red[0];
+  const dcI = mean(spec.ir) + a.ir[1] * a.dacCounts - dark - a.leak[1] * 16 * a.ir[0];
+  const res = {hr: r.f[k] * 60, qr, qi};
+  if (dcR <= 0 || dcI <= 0) return {...res, msg: 'less light than the calibrated leak: leak calibration not valid for this ring'};
+  res.R = (amp(r.p) / dcR) / (amp(i.p) / dcI);
+  res.spo2 = 110 - 25 * res.R;
+  res.ok = qr >= SPEC_Q_MIN && qi >= SPEC_Q_MIN;
+  return res;
+}
+const SPEC_Q_MIN = 3;  // pulse peak at least 3x the typical spectrum amplitude, red and IR
+function showSpectral() {
+  if (!$('spo2on').checked || !ppg) { $('spo2spec').textContent = ''; return; }
+  const s = spectralSpo2();
+  let txt = 'Spectral estimate (web app, last 20 s): ';
+  if (s.spo2 !== undefined) {
+    txt += s.ok ? `${Math.round(s.spo2)} %` : '--';
+    txt += ` · R ${s.R.toFixed(2)} · pulse ${Math.round(s.hr)} bpm · peak quality red ${s.qr.toFixed(1)}, IR ${s.qi.toFixed(1)}` +
+           (s.ok ? '' : ` (needs ${SPEC_Q_MIN})`);
+  } else txt += s.msg + (s.hr ? ` · pulse ${Math.round(s.hr)} bpm` : '');
+  $('spo2spec').textContent = txt;
+}
+
+setInterval(() => { updateHrv(); if (ppg) updateTrend(); showSpectral(); }, 1000);
+buildRegs();
+showLed();
+if (!navigator.bluetooth) status('Web Bluetooth not available: use Chrome or Edge (iPhone / iPad: the Bluefy app)', 'err');
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
