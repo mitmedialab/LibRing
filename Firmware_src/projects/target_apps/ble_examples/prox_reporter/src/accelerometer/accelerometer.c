@@ -84,6 +84,14 @@ bool accel_config(void) {
         return false;
     }
 
+    // FIFO off (bypass): a firmware that enabled it (FIFO averaging test, 2026-11-20)
+    // leaves it on, the chip staying powered; the reads would then return the oldest
+    // queued sample (~0.3 s late) instead of the latest
+    uint8_t fifo_off[2][2] = {{0x24, 0x00}, {0x2E, 0x00}}; // CTRL_REG5, FIFO_CTRL_REG
+    for (int i = 0; i < 2; i++) {
+        i2c_master_transmit_buffer_sync(fifo_off[i], 2, &abort_code, I2C_F_WAIT_FOR_STOP);
+    }
+
     arch_printf("Accelerometer Configured successfully");
     return true;
 }
