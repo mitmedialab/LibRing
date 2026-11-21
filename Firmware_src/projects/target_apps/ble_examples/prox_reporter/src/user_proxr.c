@@ -460,14 +460,20 @@ static bool ppg_streaming = false;
 // main timer ticks (100 ms) without notification, so that the client can read the
 // result of a register read from the characteristic value
 static uint8_t ppg_hold = 0;
+// the sensor may be running although ppg_streaming is false: configured by the client
+// (LED, mode, registers: its LED can light up without notifications) or a ppg_start()
+// that failed halfway. Stopping it on a disconnection must not depend on ppg_streaming
+// (seen: green LED still blinking after the app disconnected)
+static bool ppg_touched = false;
 
 void user_ppg_streaming(bool enable) {
-    if (enable == ppg_streaming || (enable && suota_active)) {
+    if (enable ? (ppg_streaming || suota_active) : !(ppg_streaming || ppg_touched)) {
         return;
     }
     if (enable) {
         arch_force_active_mode(); // keep the I2C peripheral powered (as for the accel)
         accel_init();             // I2C controller set up
+        ppg_touched = true;       // before: a failure halfway may leave it running
         ppg_streaming = ppg_start();
         arch_printf("PPG start: %d\r\n", ppg_streaming);
         if (ppg_streaming) {
@@ -482,7 +488,9 @@ void user_ppg_streaming(bool enable) {
         }
     } else {
         ppg_streaming = false;
+        ppg_touched = false;
         LED_indicators &= ~LED_IND_HEART;
+        accel_init();             // I2C controller set up (configured only, or lost)
         ppg_stop();
         arch_restore_sleep_mode();
         arch_printf("PPG stop\r\n");
@@ -594,6 +602,11 @@ static void clock_temperature_read(void)
 void user_ppg_config(const uint8_t *value, uint16_t len) {
     if (suota_active || !has_timer_started) {
         return;
+    }
+    // everything but the display mode, the LED overlay and the clock temperature may
+    // start the sensor: stopped on disconnection (user_ppg_streaming(false))
+    if (!((len == 2 && value[0] == 0xF4) || (len == 3 && value[0] == 0xF6) || (len == 1 && value[0] == 0xF1))) {
+        ppg_touched = true;
     }
     if (len == 2 && value[0] == 0xFC) {
         ppg_agc_enable(value[1]);
@@ -1341,8 +1354,11 @@ void user_app_on_disconnect(struct gapc_disconnect_ind const *param)
     }
     user_con_rssi = 127;
 
+    // everything the client started stops: streams, PPG sensor (even only configured),
+    // LED overlays it set
     user_accel_streaming(false);
     user_ppg_streaming(false);
+    memset(LED_overlay, 0, sizeof(LED_overlay));
 
     // if (main_timer_hnd != EASY_TIMER_INVALID_TIMER) {
     //     app_easy_timer_cancel(main_timer_hnd);
