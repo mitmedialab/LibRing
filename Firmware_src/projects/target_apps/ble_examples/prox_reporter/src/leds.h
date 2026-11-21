@@ -36,9 +36,10 @@ extern uint8_t LED_indicators;
 extern uint8_t LED_charge_indicators;
 
 // Brightness: each line has LED_TICKS_PER_LINE timer ticks of 0.25 ms (1.5 ms per
-// line, 111 Hz frames); the LEDs are on during LED_ON_TICKS of them (50 % of the line:
-// 8.3 % duty), the charge indicators during LED_CHARGE_TICKS (1/6 x 4/6 = 11 % duty)
+// line, 111 Hz frames); the LEDs are on during LED_ON_TICKS of them (33 % of the line:
+// 5.6 % duty; 50 % until 2026-11-20, lowered to save power), the charge indicators
+// during LED_CHARGE_TICKS (1/6 x 4/6 = 11 % duty)
 #define LED_TICKS_PER_LINE 6
-#define LED_ON_TICKS       3
+#define LED_ON_TICKS       2
 #define LED_CHARGE_TICKS   4
 #endif
