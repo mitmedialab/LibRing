@@ -66,6 +66,17 @@
   .sortbar select { font: inherit; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border);
                     background: var(--panel); color: var(--text); margin-left: 6px; }
   #matrix td:first-child, #matrix th:first-child { text-align: left; }
+  .fusionbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 12px 0 8px; }
+  .fusionbar input, .fusionbar select { font: inherit; width: 5em; padding: 3px 6px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  .fusionbar select { width: auto; }
+  #distRows button { padding: 2px 8px; font-size: 12px; }
+  .moving { color: var(--warn); font-weight: 600; }
+  h3.sub { font-size: 14px; margin: 14px 0 4px; }
+  .groupstate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin: 8px 0; }
+  .groupstate .big { font-size: 32px; font-weight: 700; }
+  .zone { font-size: 20px; font-weight: 700; padding: 2px 14px; border-radius: 14px; color: #fff; }
+  .zone.near { background: var(--ok); } .zone.mid { background: var(--s4); } .zone.far { background: var(--s1); }
 </style>
 </head>
 <body>
@@ -122,6 +133,63 @@
   </section>
 
   <section class="panel">
+    <h2>Distance estimate: RSSI + accelerometer <span class="muted" style="font-weight: normal">(experimental)</span></h2>
+    <p class="muted" style="margin: 0 0 8px">
+      Distance from the RSSI: d = 10<sup>(P0 − RSSI) / (10 n)</sup>, P0 the RSSI at 1 m. A single reading is
+      off by several dB (fading, hand, body), so the RSSI has to be averaged, which only works while the
+      distance doesn't change. The accelerometer tells when it does: gravity removed, the acceleration is
+      integrated into a speed, reset to 0 each time the ring is still. It can't give the distance itself (no
+      gyroscope or compass: the direction of the other end is unknown), but the length of the move bounds how
+      much the distance may have changed. "Fused": a Kalman filter that averages the RSSI over several seconds
+      while the rings are still, and follows it right away during a move. Compared with the RSSI alone,
+      low-passed over 0.5 s (fast, noisy) and 1 s. Ring to ring: both directions (A hears B,
+      B hears A), and the motion of both rings when both are connected.</p>
+    <h3 class="sub">Group distance</h3>
+    <p class="muted" style="margin: 0 0 8px">Two groups of rings, e.g. A: two rings on one hand, B: two rings fixed
+      on a table. The distance uses the mean RSSI (dB) of every link between the groups, both directions: their
+      antennas point different ways, so the mean cancels much of the orientation effect (tests, 2026-11-20: a
+      single link off by up to ×2, the mean of 4 links by ×1.3). Needs ring-to-ring RSSI, and every link between
+      the groups heard. Calibrate it in the table below (row "Group …"), at 2 distances.</p>
+    <div id="groupRings" class="fusionbar"><span class="muted">Connect rings.</span></div>
+    <div class="fusionbar">
+      <label title="Group distance below this: near">Near below <input id="zoneNear" type="number" value="0.4" min="0.05" step="0.05"> m</label>
+      <label title="Group distance above this: far">far above <input id="zoneFar" type="number" value="0.8" min="0.05" step="0.05"> m</label>
+    </div>
+    <div id="groupState" class="groupstate"><span class="muted">Choose the rings of groups A and B.</span></div>
+    <h3 class="sub">Motion of each ring</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Ring</th><th>State</th><th title="Acceleration without gravity">Acceleration</th>
+        <th title="Integrated acceleration, leaky (rough: 10 samples/s)">Speed</th>
+        <th title="|a| while still: should be 1 g (the ring's scale, corrected here)">1 g reads</th>
+        <th title="Displacement of the last move, integrated twice between two still moments, constant drift removed. Unreliable when the ring turned during the move (no gyroscope: part of gravity is taken for motion) or moved more than 4 s">Last move (double integration)</th></tr></thead>
+      <tbody id="motionRows"><tr><td colspan="6" class="muted">Connect rings.</td></tr></tbody>
+    </table></div>
+    <div class="fusionbar">
+      <label title="Measure it (tape): used to calibrate, and as the truth of the marks">True distance
+        <input id="truth" type="number" value="1" min="0.05" max="50" step="0.05"> m</label>
+      <label title="Path-loss exponent: 2 in free space, often 2–4 indoors. Used until a link has calibration points at 2 distances (×1.4 apart at least), which fit it">n
+        <input id="pathN" type="number" value="2" min="1" max="6" step="0.1"></label>
+      <button id="copyMarks" title="Copy the marks below as CSV">Copy marks (CSV)</button>
+      <button id="clearMarks">Clear marks</button>
+    </div>
+    <p class="muted" style="margin: 0 0 8px">Test: put the ring at a measured distance, enter it, hold still a few
+      seconds, then "Calibrate" (the first time, at 1 m for instance; a second distance fits n too) or "Mark" (the
+      three estimates are recorded against the true distance, errors below). Calibrations stay in this browser.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Link</th><th>RSSI</th><th>RSSI only, 0.5 s</th><th>RSSI only, 1 s</th>
+        <th title="± : 1 standard deviation, as a factor (×/÷)">Fused</th><th>Calibration</th><th></th></tr></thead>
+      <tbody id="distRows"><tr><td colspan="7" class="muted">Connect rings.</td></tr></tbody>
+    </table></div>
+    <div class="fusionbar"><label>Graph <select id="distLink"></select></label>
+      <span class="muted">last 30 s, log scale; shaded: moving; dashed: true distance</span></div>
+    <div class="chart"><canvas id="distChart"></canvas></div>
+    <div class="axis"><span>−30 s</span><span id="distHover"></span><span>now</span></div>
+    <div class="legend" id="distLegend"></div>
+    <h3 class="sub">Marks</h3>
+    <div class="scroll"><table id="marks"></table></div>
+  </section>
+
+  <section class="panel">
     <h2>Connected rings</h2>
     <div id="cards"><span class="muted">None yet: "Add rings" (pick one ring per chooser, cancel when done).</span></div>
   </section>
@@ -134,6 +202,7 @@
 
 <script type="module">
 import { drawSeries, prepareCanvas } from '../shared/plot.js';
+import { Motion, Link, FUSION } from './fusion.js';
 
 const SERVICE = '00112233-4455-6677-8899-aabbccddeeff';
 const ACCEL = 'f2909165-4ce5-8da2-4c10-8b38c19f65cc';
@@ -214,6 +283,7 @@ class Ring {
     this.peers = new Map(); // ring heard by this one (name) -> { avg (filtered), time, times, history }
     this.linkLpf = {};
     this.reportTimes = []; this.lostReports = 0;
+    this.motion = new Motion(); // accelerometer -> moving / still, speed (distance estimate)
     device.addEventListener('gattserverdisconnected', () => {
       this.polling = false; this.proxPolling = false;
       this.setStatus('disconnected');
@@ -224,9 +294,12 @@ class Ring {
   onAccel(v) {
     const sens = v.byteLength > 6 ? v.getUint8(6) : 0;
     const k = [1, 2, 4, 8][sens] * 0.001;
-    this.xyz = [0, 2, 4].map((o) => (v.getInt16(o, false) >> 4) * k);
+    // 12 bits left-justified; / 16 rather than >> 4: firmware averaging the FIFO
+    // (2026-11-20+) puts the fraction of the mean in the low 4 bits
+    this.xyz = [0, 2, 4].map((o) => v.getInt16(o, false) / 16 * k);
     const now = performance.now();
     this.times.push(now); this.count++;
+    this.motion.sample(this.xyz, now);
     // byte 7 (firmware 2026-11-11+): RSSI of the link measured by the ring, 127 = unknown.
     // Updated ~4 times per second, so repeated values are only counted once.
     // Single readings around -105 dBm show up now and then: below the receiver's
@@ -239,6 +312,7 @@ class Ring {
       } else {
         this.linkRssi = lowPass(this.linkLpf, rssi, now);
         this.linkRssiTime = now;
+        computerLink(this).measure(rssi, now, [this.motion]);
       }
     }
     this.lastRawRssi = rssi;
@@ -268,6 +342,10 @@ class Ring {
       p.avg = lowPass(p.lpf, rssi, now);
       p.time = now;
       for (let k = 0; k < count; k++) p.times.push(now);
+      if (count) { // distance estimate: the motion of both rings when both are connected
+        const other = connectedRing(name);
+        pairLink(this.name, name).measure(rssi, now, other ? [this.motion, other.motion] : [this.motion], count);
+      }
     }
     for (const p of this.peers.values()) {
       while (p.times.length && now - p.times[0] > 3000) p.times.shift();
@@ -606,6 +684,9 @@ function render() {
       q('.btn').textContent = `button ${ring.button ? 'pressed' : '–'}`;
     }
   }
+  renderMotion(now);
+  renderGroup(now);
+  renderDistance(now);
 }
 setInterval(render, 300);
 
@@ -774,6 +855,9 @@ setInterval(() => {
     peerChartFor(r).draw(series, scale);
   }
   renderMatrix(now);
+  if (++groupTick % 5 === 0) feedGroup(now); // every 500 ms
+  pushDistances(now);
+  drawDistance();
 }, CHART_DT);
 
 // Who hears whom: rows = measuring ring, columns = heard ring, averaged RSSI
@@ -804,6 +888,279 @@ function renderMatrix(now) {
   });
   $('matrix').innerHTML = head + rows.join('');
 }
+
+// ---- distance estimate: RSSI + accelerometer (fusion.js) ----------------------------
+
+const links = new Map(); // id -> Link (a ring and this computer, or two rings)
+window.links = links;
+const short = (name) => name.replace('LibRing_', '');
+function linkFor(id, label, peer) {
+  let l = links.get(id);
+  if (!l) { l = new Link(id, label, peer); links.set(id, l); }
+  return l;
+}
+const computerLink = (ring) => linkFor(`${ring.name}|computer`, `${ring.name} ↔ computer`, false);
+function pairLink(a, b) {
+  const [x, y] = [a, b].sort();
+  return linkFor(`${x}|${y}`, `${short(x)} ↔ ${short(y)}`, true);
+}
+const connectedRing = (name) => [...rings.values()].find((r) => r.name === name && r.connected);
+const fmtDist = (d) => d == null ? '–' : d < 1 ? `${(d * 100).toFixed(0)} cm` : `${d.toFixed(2)} m`;
+const truth = () => { const v = parseFloat($('truth').value); return v > 0 ? v : null; };
+const linkOrder = () => [...links.values()].sort((a, b) => (a.peer - b.peer) || a.label.localeCompare(b.label));
+
+$('pathN').onchange = () => {
+  const n = parseFloat($('pathN').value);
+  if (!(n >= 1 && n <= 6)) return;
+  FUSION.n = n;
+  for (const l of links.values()) { l.fit(); l.s = null; } // the filters start again
+};
+
+function renderMotion(now) {
+  const list = [...rings.values()].filter((r) => r.connected).sort((a, b) => a.name.localeCompare(b.name));
+  $('motionRows').innerHTML = list.map((r) => {
+    const m = r.motion, mv = m.lastMove;
+    const move = !mv ? '<span class="muted">none yet</span>' :
+      `${fmtDist(mv.distance)} in ${mv.duration.toFixed(1)} s` +
+      ` <span class="muted">(turned ${mv.turned.toFixed(0)}°, ${((now - mv.time) / 1000).toFixed(0)} s ago)</span>` +
+      (mv.unreliable ? ' <span class="err">unreliable</span>' : '');
+    return `<tr><td><span class="key" style="background:${ringColor(r.name)}"></span>${esc(r.name)}</td>
+      <td class="${m.moving ? 'moving' : 'muted'}">${m.moving ? 'moving' : 'still'}</td>
+      <td>${m.lin.toFixed(2)} g</td><td>${m.moving ? (m.speed * 100).toFixed(0) + ' cm/s' : '0'}</td>
+      <td>${m.gNorm ? m.gNorm.toFixed(2) : '–'}</td><td>${move}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="muted">Connect rings.</td></tr>';
+}
+
+// Rows built once per link (rebuilding them would eat clicks on their buttons)
+const distRows = new Map(); // link id -> tr
+function renderDistance(now) {
+  const order = linkOrder();
+  if (order.length && $('distRows').firstElementChild?.querySelector('td[colspan]')) $('distRows').innerHTML = '';
+  order.forEach((l, i) => {
+    let tr = distRows.get(l.id);
+    if (!tr) {
+      tr = document.createElement('tr');
+      tr.innerHTML = `<td></td><td></td><td></td><td></td><td></td><td></td><td><button class="cal"
+        title="Adds a calibration point: this link's RSSI (3 s average: hold still) at the true distance">Calibrate</button>
+        <button class="mark" title="Records the three estimates against the true distance">Mark</button>
+        <button class="clr" title="Forget this link's calibration">×</button></td>`;
+      tr.cells[0].textContent = l.label;
+      tr.querySelector('.cal').onclick = () => calibrate(l);
+      tr.querySelector('.mark').onclick = () => mark(l);
+      tr.querySelector('.clr').onclick = () => { l.clearCalibration(); log(`${l.label}: calibration cleared`); };
+      distRows.set(l.id, tr);
+    }
+    if ($('distRows').children[i] !== tr) $('distRows').insertBefore(tr, $('distRows').children[i] || null);
+    const stale = !fresh(l.rssiTime, now);
+    tr.className = stale ? 'stale' : '';
+    const c = tr.cells;
+    c[1].textContent = l.fast.value == null ? '–' : `${l.fast.value.toFixed(0)} dBm`;
+    c[2].textContent = fmtDist(l.dFast);
+    c[3].textContent = fmtDist(l.dSlow);
+    c[4].innerHTML = `<b>${fmtDist(l.dFused)}</b> <span class="muted">×/÷ ${l.spread ? l.spread.toFixed(2) : '–'}</span>` +
+      (l.moving ? ' <span class="moving">moving</span>' : '');
+    c[5].textContent = `P0 ${l.p0.toFixed(0)} dBm, n ${l.n.toFixed(1)}` +
+      (l.calibrated ? ` (${l.points.length} point${l.points.length > 1 ? 's' : ''})` : ' (assumed)');
+    c[5].className = l.calibrated ? '' : 'muted';
+    c[5].title = l.points.map((p) => `${p.d} m: ${p.rssi} dBm`).join('\n');
+  });
+  // graph choice (the group link changes with the groups: same count, other link)
+  const sel = $('distLink');
+  if ([...sel.options].map((o) => o.value).join('\n') !== order.map((l) => l.id).join('\n')) {
+    const cur = sel.value;
+    sel.innerHTML = order.map((l) => `<option value="${esc(l.id)}">${esc(l.label)}</option>`).join('');
+    if (order.some((l) => l.id === cur)) sel.value = cur;
+  }
+}
+
+// ---- group distance: mean RSSI of the links between two groups of rings ----
+// (e.g. A: rings on a hand, B: rings on a table). Antenna orientation changes a single
+// link by up to ~19 dB; the mean of the links between rings turned differently varies
+// much less (tests 2026-11-20). Its own Link (calibration, filter, graph, marks), fed
+// every 500 ms with the mean of the pair links' 0.5 s RSSI, all of them heard (a
+// missing link would shift the mean), and the motion of every ring of both groups.
+const GROUP_KEY = 'multiRingGroups';
+let groups = {}; // ring name -> 'A' | 'B'
+try { groups = JSON.parse(localStorage.getItem(GROUP_KEY)) || {}; } catch {}
+const members = (g) => Object.keys(groups).filter((n) => groups[n] === g).sort();
+const pairOf = (a, b) => links.get([a, b].sort().join('|'));
+let groupLink = null, groupInfo = null, groupTick = 0;
+function currentGroupLink() {
+  const A = members('A'), B = members('B');
+  const id = A.length && B.length ? `group:${A.join('+')}|${B.join('+')}` : null;
+  if (groupLink && groupLink.id !== id) { // the groups changed: other calibration
+    links.delete(groupLink.id); distRows.get(groupLink.id)?.remove(); distRows.delete(groupLink.id);
+    groupLink = null;
+  }
+  if (id && !groupLink) groupLink = linkFor(id, `Group ${A.map(short).join('+')} ↔ ${B.map(short).join('+')}`, true);
+  return groupLink;
+}
+function feedGroup(now) {
+  const l = currentGroupLink();
+  if (!l) { groupInfo = null; return; }
+  const A = members('A'), B = members('B');
+  const vals = A.flatMap((a) => B.map((b) => { const p = pairOf(a, b);
+    return p && fresh(p.rssiTime, now) && p.fast.value != null ? p.fast.value : null; }));
+  const ok = vals.filter((v) => v != null);
+  groupInfo = { have: ok.length, total: vals.length };
+  if (ok.length < vals.length) return;
+  const motions = [...A, ...B].map(connectedRing).filter(Boolean).map((r) => r.motion);
+  l.measure(ok.reduce((s, x) => s + x, 0) / ok.length, now, motions, ok.length);
+}
+const groupSelects = new Map(); // ring name -> select (built once: rebuilding eats clicks)
+function renderGroup(now) {
+  const names = [...new Set([...rings.values()].map((r) => r.name))].sort();
+  if (names.join() !== [...groupSelects.keys()].join()) {
+    $('groupRings').innerHTML = names.length ? '' : '<span class="muted">Connect rings.</span>';
+    groupSelects.clear();
+    for (const name of names) {
+      const label = document.createElement('label');
+      label.innerHTML = `<span class="key" style="background:${ringColor(name)}"></span>${esc(short(name))} `;
+      const sel = document.createElement('select');
+      sel.innerHTML = '<option value="">–</option><option value="A">A</option><option value="B">B</option>';
+      sel.value = groups[name] || '';
+      sel.onchange = () => {
+        if (sel.value) groups[name] = sel.value; else delete groups[name];
+        try { localStorage.setItem(GROUP_KEY, JSON.stringify(groups)); } catch {}
+        currentGroupLink();
+      };
+      label.appendChild(sel);
+      $('groupRings').appendChild(label);
+      groupSelects.set(name, sel);
+    }
+  }
+  const l = currentGroupLink();
+  if (!l) { $('groupState').innerHTML = '<span class="muted">Choose the rings of groups A and B.</span>'; return; }
+  // rings of a group worn together: their own link (one finger: about −20 dBm)
+  const together = ['A', 'B'].map((g) => {
+    const m = members(g);
+    if (m.length < 2) return '';
+    const v = m.flatMap((a, i) => m.slice(i + 1).map((b) => pairOf(a, b)))
+      .map((p) => p && fresh(p.rssiTime, now) ? p.fast.value : null);
+    if (v.some((x) => x == null)) return `<span class="muted">${g}: not all heard each other</span>`;
+    const worst = Math.min(...v);
+    return worst > -35 ? `<span class="ok">${g}: together (${worst.toFixed(0)} dBm)</span>`
+                       : `<span class="muted">${g}: apart (${worst.toFixed(0)} dBm)</span>`;
+  }).filter(Boolean).join(' ');
+  const waiting = !groupInfo || groupInfo.have < groupInfo.total;
+  const d = l.dFused;
+  if (waiting && (d == null || !fresh(l.rssiTime, now))) {
+    $('groupState').innerHTML = `<span class="muted">Waiting for every link between the groups` +
+      `${groupInfo ? ` (${groupInfo.have}/${groupInfo.total} heard)` : ''}: ring-to-ring RSSI on?</span> ${together}`;
+    return;
+  }
+  const near = parseFloat($('zoneNear').value) || 0.4, far = parseFloat($('zoneFar').value) || 0.8;
+  const zone = d < near ? 'near' : d > far ? 'far' : 'mid';
+  $('groupState').innerHTML = `<span class="big">${fmtDist(d)}</span>` +
+    `<span class="zone ${zone}">${zone}</span>` +
+    `<span class="muted">×/÷ ${l.spread ? l.spread.toFixed(2) : '–'}, ${groupInfo ? groupInfo.have : 0} links</span>` +
+    (l.moving ? '<span class="moving">moving</span>' : '') +
+    (waiting ? '<span class="err">a link is missing: holding</span>' : '') +
+    (l.calibrated ? '' : '<span class="err">not calibrated: "Calibrate" its row below, at 2 distances</span>') +
+    ` ${together}`;
+}
+
+function calibrate(l) {
+  const d = truth();
+  if (!d) { log('enter the true distance first'); return; }
+  if (!fresh(l.rssiTime, performance.now())) { log(`${l.label}: no recent RSSI, not calibrated`); return; }
+  if (l.moving) log(`${l.label}: moving, the calibration will be off (hold still a few seconds)`);
+  l.calibrate(d);
+  log(`${l.label}: ${l.cal.value.toFixed(1)} dBm at ${d} m -> P0 ${l.p0.toFixed(1)} dBm, n ${l.n.toFixed(2)}` +
+    ` (${l.points.length} point${l.points.length > 1 ? 's' : ''})`);
+}
+
+const marks = [];
+function mark(l) {
+  const d = truth();
+  if (!d) { log('enter the true distance first'); return; }
+  if (!fresh(l.rssiTime, performance.now())) { log(`${l.label}: no recent RSSI, no mark`); return; }
+  marks.push({ time: new Date().toISOString(), link: l.label, truth: d, fast: l.dFast, slow: l.dSlow,
+               fused: l.dFused, moving: l.moving, calibrated: l.calibrated, p0: l.p0, n: l.n });
+  renderMarks();
+}
+// error as a ratio (+30 %: 1.3 times too far, −23 %: 1.3 times too close)
+const ratioErr = (est, t) => Math.abs(Math.log10(est / t));
+const pctOf = (e) => `${((10 ** e - 1) * 100).toFixed(0)} %`;
+function renderMarks() {
+  if (!marks.length) { $('marks').innerHTML = '<tr><td class="muted">No mark yet.</td></tr>'; return; }
+  const methods = [['fast', 'RSSI only, 0.5 s'], ['slow', 'RSSI only, 1 s'], ['fused', 'Fused']];
+  const signed = (est, t) => `${est >= t ? '+' : '−'}${pctOf(ratioErr(est, t))}`;
+  const head = `<tr><th>Link</th><th>True</th>${methods.map(([, n]) => `<th>${n}</th>`).join('')}<th></th></tr>`;
+  const rows = marks.slice(-12).map((m) => `<tr><td>${esc(m.link)}</td><td>${fmtDist(m.truth)}</td>${methods.map(([k]) =>
+    `<td>${fmtDist(m[k])} <span class="muted">${signed(m[k], m.truth)}</span></td>`).join('')}
+    <td class="muted">${m.calibrated ? '' : 'not calibrated'}${m.moving ? ' moving' : ''}</td></tr>`);
+  const rms = (k) => Math.sqrt(marks.reduce((a, m) => a + ratioErr(m[k], m.truth) ** 2, 0) / marks.length);
+  const summary = `<tr><th colspan="2">RMS error (${marks.length} mark${marks.length > 1 ? 's' : ''})</th>${methods.map(([k]) =>
+    `<th>${pctOf(rms(k))}</th>`).join('')}<th></th></tr>`;
+  $('marks').innerHTML = head + rows.join('') + summary;
+}
+renderMarks();
+$('clearMarks').onclick = () => { marks.length = 0; renderMarks(); };
+$('copyMarks').onclick = async () => {
+  const cols = ['time', 'link', 'truth', 'fast', 'slow', 'fused', 'moving', 'calibrated', 'p0', 'n'];
+  const csv = [cols.join(','), ...marks.map((m) => cols.map((c) =>
+    typeof m[c] === 'number' ? +m[c].toFixed(3) : JSON.stringify(m[c])).join(','))].join('\n');
+  try { await navigator.clipboard.writeText(csv); log(`${marks.length} marks copied`); }
+  catch (e) { log(`copy: ${e.message}`); console.log(csv); }
+};
+
+// Graph: log10 of the distances, every CHART_DT
+const distChart = { hover: null };
+const lg = (d) => d == null ? null : Math.log10(d);
+function pushDistances(now) {
+  for (const l of links.values()) {
+    // the estimates change at each report (group: every 500 ms): smoothed for display, as
+    // the RSSI charts (no stairs)
+    const ok = fresh(l.rssiTime, now), h = l.hist;
+    for (const [k, d] of [['fast', l.dFast], ['slow', l.dSlow], ['fused', l.dFused]]) h[k].push(smooth(h[k].at(-1), ok ? lg(d) : null));
+    h.moving.push(ok && l.moving);
+    for (const k in h) if (h[k].length > CHART_SPAN) h[k].shift();
+  }
+}
+function drawDistance() {
+  const l = links.get($('distLink').value);
+  const canvas = $('distChart');
+  const series = [['fast', 'RSSI only, 0.5 s', css('--muted'), 1.5], ['slow', 'RSSI only, 1 s', css('--s2'), 2],
+                  ['fused', 'Fused', css('--accent'), 2.5]];
+  if (!l) { drawSeries(canvas, [], css('--muted'), { span: CHART_SPAN }); $('distLegend').innerHTML = ''; return; }
+  const t = truth();
+  const values = series.flatMap(([k]) => l.hist[k].filter((v) => v != null));
+  if (t) values.push(lg(t));
+  let min = Math.min(...values, 0), max = Math.max(...values, 0.3);
+  min = Math.floor(min * 10) / 10; max = Math.ceil(max * 10) / 10;
+  const opts = { span: CHART_SPAN, min, max, labels: true, format: (v) => fmtDist(10 ** v) };
+  series.forEach(([k, , color, width], i) =>
+    drawSeries(canvas, padHistory(l.hist[k]), color, { ...opts, width, overlay: i > 0, labels: i === 0 }));
+  const { ctx, w, h } = prepareCanvas(canvas);
+  const xOf = (i) => (i / (CHART_SPAN - 1)) * w;
+  const moving = padHistory(l.hist.moving);
+  ctx.fillStyle = css('--warn'); ctx.globalAlpha = 0.1;
+  moving.forEach((m, i) => { if (m) ctx.fillRect(xOf(i) - w / CHART_SPAN / 2, 0, w / CHART_SPAN + 0.5, h); });
+  ctx.globalAlpha = 1;
+  if (t) { // true distance
+    const y = h - ((lg(t) - min) / (max - min || 1)) * h;
+    ctx.strokeStyle = css('--text'); ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); ctx.setLineDash([]);
+  }
+  const at = distChart.hover;
+  if (at != null) {
+    ctx.strokeStyle = css('--muted'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(Math.round(xOf(at)) + 0.5, 0); ctx.lineTo(Math.round(xOf(at)) + 0.5, h); ctx.stroke();
+  }
+  $('distHover').textContent = at == null ? '' : `${(-(CHART_SPAN - 1 - at) * CHART_DT / 1000).toFixed(1)} s`;
+  $('distLegend').innerHTML = series.map(([k, name, color]) => {
+    const hist = padHistory(l.hist[k]), v = at != null ? hist[at] : hist.at(-1);
+    return `<span><span class="key" style="background:${color}"></span><b>${name}</b> ${v == null ? '–' : fmtDist(10 ** v)}</span>`;
+  }).join('');
+}
+$('distChart').addEventListener('pointermove', (e) => {
+  const rect = $('distChart').getBoundingClientRect();
+  distChart.hover = Math.max(0, Math.min(CHART_SPAN - 1, Math.round(((e.clientX - rect.left) / rect.width) * (CHART_SPAN - 1))));
+  drawDistance();
+});
+$('distChart').addEventListener('pointerleave', () => { distChart.hover = null; drawDistance(); });
+$('distLink').onchange = drawDistance;
 
 // ---- ring-to-ring measurement (firmware 2026-11-11+, Proximity characteristic) ------
 
@@ -848,6 +1205,10 @@ window.stats = () => ({
   peers: Object.fromEntries([...rings.values()].map((r) => [r.name, { errors: r.proxErrors, lost: r.lostReports, read: !!r.proxPolling,
     reports: +(r.reportTimes.length / 3).toFixed(1),
     heard: Object.fromEntries([...r.peers.entries()].map(([n, p]) => [n, [Math.round(p.avg), p.rate]])) }])),
+  motion: Object.fromEntries([...rings.values()].map((r) => [r.name, { moving: r.motion.moving, lin: +r.motion.lin.toFixed(3),
+    g: r.motion.gNorm && +r.motion.gNorm.toFixed(3), moves: r.motion.moves || 0, last: r.motion.lastMove }])),
+  distance: Object.fromEntries([...links.values()].map((l) => [l.label, { fast: l.dFast, slow: l.dSlow, fused: l.dFused,
+    spread: l.spread, p0: l.p0, n: l.n }])),
 });
 </script>
 </body>
