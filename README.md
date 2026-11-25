@@ -23,8 +23,13 @@ With this firmware, the ring streams its sensors over Bluetooth Low Energy (BLE)
 | Perlin Noise Visualizer | Drives a Perlin noise field with the ring's tilt |
 | Heart Rate, HRV & SpO2 (experimental) | Pulse waveform, heart rate computed on the ring, heart rate variability, session trends, an uncalibrated SpO2 estimate, and the ring's temperature |
 | Webcam Pulse (experimental) | Heart rate from the laptop webcam, as an independent check of the ring (no ring needed) |
+| Firmware Updater | Updates one ring or all of them to the latest release over Bluetooth (stock rings too) |
 
-## Install the firmware (from a phone)
+## Install the firmware (from the browser)
+
+Open the **[Firmware Updater](https://mitmedialab.github.io/LibRing/flasher/)** in Chrome or Edge (computer or Android; Bluefy on iPhone), press **+ Add rings**, pick the rings, then **Update all**. It uses the latest release (older ones or your own `.bin` can be chosen too), updates the rings one at a time, and picks the right binary for stock rings by itself.
+
+## Install the firmware (from a phone, with the SUOTA app)
 
 1. On an Android phone, download the latest binary from the [releases page](https://github.com/mitmedialab/LibRing/releases/latest):
    - `LibRing_xxxxxxx_0x4C_2026_rings.bin` for rings bought in 2026

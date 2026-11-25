@@ -1,0 +1,929 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LibRing Firmware Updater</title>
+<script src="../shared/webble-notice.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1b2130; --muted: #667085; --border: #dde1e8;
+    --accent: #2563eb; --accent-soft: #e8efff; --warn: #b42318; --warn-soft: #fdecea;
+    --ok: #067647; --ok-soft: #e3f6ec; --amber: #b54708; --amber-soft: #fef0db; --track: #eef0f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11141a; --panel: #1a1f29; --text: #e6e9ef; --muted: #98a2b3; --border: #2c3442;
+            --accent: #6d9cff; --accent-soft: #1d2b4a; --warn: #f97066; --warn-soft: #3a1d1d;
+            --ok: #47cd89; --ok-soft: #133224; --amber: #fdb022; --amber-soft: #3a2a10; --track: #232a36; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 16px; }
+  a { color: var(--accent); }
+  .top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px; margin: 8px 0 16px; }
+  h1 { font-size: 24px; margin: 0; }
+  h2 { font-size: 17px; margin: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .phead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .step { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff;
+          display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex: none; }
+  .spacer { flex: 1; }
+  button, select { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border);
+                   background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.danger { color: var(--warn); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.icon { padding: 4px 9px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.amber { background: var(--amber-soft); color: var(--amber); }
+  .pill.info { background: var(--accent-soft); color: var(--accent); }
+  .pill.plain { background: var(--track); color: var(--muted); }
+  .images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .image { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+  .image b { font-variant-numeric: tabular-nums; }
+  details.notes { margin-top: 10px; }
+  details.notes summary { cursor: pointer; color: var(--accent); }
+  .notesbody { white-space: pre-wrap; font-size: 13px; color: var(--muted); margin: 6px 0 0; max-height: 260px; overflow-y: auto; }
+  #drop { display: none; position: fixed; inset: 0; background: color-mix(in srgb, var(--accent) 18%, transparent);
+          border: 4px dashed var(--accent); z-index: 10; align-items: center; justify-content: center;
+          font-size: 22px; font-weight: 700; color: var(--accent); }
+  body.dragging #drop { display: flex; }
+  .ring { display: grid; grid-template-columns: auto minmax(120px, 1.3fr) minmax(130px, 1.4fr) auto; gap: 4px 14px;
+          align-items: center; padding: 12px 4px; border-top: 1px solid var(--border); }
+  .ring:first-child { border-top: none; }
+  .ring .name { font-weight: 700; font-size: 16px; }
+  .ring .meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 2px 12px; }
+  .ring .meta span { white-space: nowrap; }
+  .ring .meta .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-right: 4px; opacity: .8; }
+  .ring .meta .v { color: var(--text); font-variant-numeric: tabular-nums; }
+  .ring .meta .v.unknown { color: var(--muted); }
+  .ring .status { font-size: 13.5px; }
+  .ring .acts { display: flex; gap: 6px; justify-content: flex-end; }
+  .ring input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+  .bar { grid-column: 2 / -1; height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; display: none; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .ring.flashing .bar, .ring.done .bar, .ring.failed .bar { display: block; }
+  .ring.done .bar > div { background: var(--ok); }
+  .ring.failed .bar > div { background: var(--warn); }
+  .ring.flashing { background: var(--accent-soft); border-radius: 8px; }
+  .empty { padding: 18px 4px; color: var(--muted); }
+  .actionbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-top: 1px solid var(--border);
+               margin-top: 6px; padding-top: 12px; }
+  #overall { font-size: 14px; }
+  ul.tips { margin: 0; padding-left: 20px; }
+  ul.tips li { margin: 4px 0; }
+  code { font: 13px ui-monospace, monospace; background: var(--track); padding: 1px 5px; border-radius: 4px; }
+  details.log summary { cursor: pointer; font-weight: 600; }
+  #log { white-space: pre-wrap; font: 12px/1.45 ui-monospace, monospace; color: var(--muted);
+         max-height: 260px; overflow-y: auto; margin: 8px 0 0; }
+  .banner { border-radius: 8px; padding: 8px 12px; margin-top: 10px; font-size: 14px; }
+  .banner.warn { background: var(--warn-soft); color: var(--warn); }
+  .banner.amber { background: var(--amber-soft); color: var(--amber); }
+  @media (max-width: 640px) {
+    .ring { grid-template-columns: auto 1fr; }
+    .ring .status, .ring .acts { grid-column: 2; justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<div id="drop">Drop the .bin file to use it</div>
+<main>
+  <header class="top">
+    <div>
+      <h1>⚡ LibRing Firmware Updater</h1>
+      <div class="muted">Update the rings over Bluetooth, from this page.</div>
+    </div>
+    <a href="../">← All apps</a>
+  </header>
+
+  <section class="panel">
+    <div class="phead">
+      <span class="step">1</span><h2>Firmware</h2>
+      <span class="spacer"></span>
+      <select id="release" aria-label="Firmware version"><option>Loading the releases…</option></select>
+      <button id="openFile" title="A firmware you built yourself (output.bin), or one downloaded from GitHub">Open a .bin file…</button>
+      <input id="file" type="file" accept=".bin,application/octet-stream" hidden>
+    </div>
+    <div id="fwInfo" class="muted">Loading…</div>
+    <div id="images" class="images"></div>
+    <div id="fwBanner"></div>
+    <div id="ghBanner"></div>
+    <details class="notes" id="notes" hidden><summary>What's new in this version</summary><div class="notesbody" id="notesBody"></div></details>
+  </section>
+
+  <section class="panel">
+    <div class="phead">
+      <span class="step">2</span><h2>Rings</h2>
+      <span class="spacer"></span>
+      <button id="add" class="primary" title="Opens the Bluetooth chooser again after each ring: cancel it when done">+ Add rings</button>
+      <button id="refresh" title="Battery and signal of each ring (a short connection), and its firmware version when the browser passes the advertisements">Refresh info</button>
+    </div>
+    <div id="rings"><div class="empty">No ring yet. Press <b>+ Add rings</b>, pick one ring, and the chooser opens again for the next one. Cancel it when done.</div></div>
+    <div class="actionbar">
+      <button id="flashSel" class="primary" disabled>Update selected</button>
+      <button id="flashAll" disabled>Update all</button>
+      <button id="stop" class="danger" hidden title="Stops after the ring being updated now">Stop after this ring</button>
+      <span id="overall" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-bottom: 8px">Tips</h2>
+    <ul class="tips small">
+      <li><b>Keep the rings close</b> to the computer or phone (less than 1 m).</li>
+      <li><b>Close the other apps</b> using a ring: a connected ring doesn't show in the chooser.</li>
+      <li>Rings are updated <b>one at a time</b> (about 10 s each on LibRing firmware, 45 s on a stock ring).</li>
+      <li>A failed or interrupted update is <b>safe</b>: the ring keeps its previous firmware. Just try again.</li>
+      <li><b>Stock rings</b> (never updated) only take the image of their model: the page tries the 2026 rings' image (0x4C), then the older one (0x17).</li>
+      <li>After an update, a ring keeps its name. A ring that had a <b>factory address</b> (stock rings, a few old ones) gets a new name <code>LibRing_XX</code>: add it again.</li>
+      <li><b>Battery and signal</b>: read over a short connection when a ring is added (<b>Refresh info</b> reads them again).
+        The <b>firmware version</b> shows before an update only in browsers that pass the rings' advertisements to the page (not Android Chrome, not Chrome on Linux).
+        The <b>address</b> is hidden by every browser: only its last byte (the ring's name) is shown; <code>make scan</code> shows it all.</li>
+      <li><b>Android</b>: the chooser opens once per click: press <b>+ Add another ring</b> for each ring.</li>
+      <li><b>Linux</b>: Chrome needs <code>chrome://flags/#enable-experimental-web-platform-features</code>.
+        If connections keep dropping: <code>ConnectionSupervisionTimeout=400</code> in <code>/etc/bluetooth/main.conf</code>.</li>
+      <li><b>iPhone / iPad</b>: use the <a href="https://apps.apple.com/us/app/bluefy-web-ble-browser/id1492822055">Bluefy</a> browser.
+        From a computer you can also use <code>make flash_all</code> (see the <a href="https://github.com/mitmedialab/LibRing#firmware-custom-flashed-over-the-air">README</a>).</li>
+    </ul>
+  </section>
+
+  <details class="panel log">
+    <summary>Log</summary>
+    <pre id="log"></pre>
+  </details>
+</main>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const bt = navigator.bluetooth;
+
+// ---- constants (same as Eclipse/suota_flash.py) ------------------------------------
+
+const SUOTA_SERVICE = '0000fef5-0000-1000-8000-00805f9b34fb';
+const CHARS = {
+  memDev:    '8082caa8-41a6-4021-91c6-56f9b954cc34',
+  gpioMap:   '724249f0-5ec3-4b5f-8804-42345af08651',
+  memInfo:   '6c53db25-47a1-45fe-a022-7c92fb334fd4', // bytes received so far (u32)
+  patchLen:  '9d84b9a3-000c-49d8-9183-855b673fda31',
+  patchData: '457871e8-d516-4ca1-9116-57d0b17b9cb2',
+  status:    '5f78df94-798c-46f5-990a-b3eb6a065c88',
+  mtu:       'b7de1eea-823d-43bb-a3af-c4903dfce23c', // SUOTA 1.3, our firmware only
+  pdSize:    '42c3dfdd-77be-4d9c-8454-8f875267fb3b', // SUOTA 1.3, our firmware only
+};
+const LIBRING_SERVICE = '00112233-4455-6677-8899-aabbccddeeff';
+const BATT = 'e15175c3-8006-0d8a-7048-08c0353e678a';
+const ACCEL = 'f2909165-4ce5-8da2-4c10-8b38c19f65cc'; // byte 7: link RSSI measured by the ring (127: none yet)
+const VERSION_COMPANY_ID = 0xFFFF; // our firmware's manufacturer data (src/firmware_version.c)
+
+const MEM_SPI_FLASH = 0x13, CMD_IMG_END = 0xFE, CMD_REBOOT = 0xFD;
+const GPIO_MAP_SR08 = 0x05060300; // SPI flash: MISO P0_5, MOSI P0_6, CS P0_3, SCK P0_0
+const ST = { STARTED: 0x01, OK: 0x02, CRC: 0x04, IMG_STARTED: 0x10, BAD_HEADER: 0x12 };
+const STATUS = {
+  0x01: 'service started', 0x02: 'OK', 0x03: 'service exit', 0x04: 'CRC error',
+  0x05: 'patch length error', 0x06: 'flash write error', 0x07: 'internal memory error',
+  0x08: 'invalid memory type', 0x09: 'application error', 0x10: 'image started',
+  0x11: 'invalid image bank', 0x12: 'image refused (built for another ring model)',
+  0x13: 'invalid image size', 0x14: 'invalid product header', 0x15: 'same image',
+  0x16: 'flash read error',
+};
+const PRODUCTS = { 0x4C: '2026 rings', 0x17: 'older SR08 rings' };
+const PREFERRED_PID = 0x4C; // stock rings: tried first
+
+class SuotaError extends Error {}      // the ring refused: retrying won't help
+class SmallWritesError extends Error {} // big writes failed: retry with 20-byte writes
+
+// ---- log ---------------------------------------------------------------------------
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  const el = $('log');
+  el.textContent += `${t}  ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+  console.log(msg);
+}
+
+// ---- firmware images ---------------------------------------------------------------
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+// OTA image (make_bin_ota.py): 64-byte header, code, XOR byte. Checked like the ring does.
+function parseImage(buffer, fileName) {
+  const b = new Uint8Array(buffer);
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  if (b.length < 66 || b[0] !== 0x70 || b[1] !== 0x51) throw new Error(`${fileName}: not a LibRing OTA image`);
+  const allSize = dv.getUint32(4, true), codeSize = dv.getUint32(33, true);
+  if (64 + codeSize > b.length || 64 + allSize > b.length) throw new Error(`${fileName}: truncated`);
+  if (crc32(b.subarray(64, 64 + codeSize)) !== dv.getUint32(8, true)) throw new Error(`${fileName}: damaged (CRC32)`);
+  let x = 0;
+  for (let i = 0; i < b.length - 1; i++) x ^= b[i];
+  if (x !== b[b.length - 1]) throw new Error(`${fileName}: damaged (checksum)`);
+  return {
+    bytes: b, fileName, allSize,
+    pid: dv.getUint16(39, true),
+    built: new Date(dv.getUint32(28, true) * 1000),
+    commit: (fileName.match(/(?:^|[_\-\s])([0-9a-f]{7})(?=[_.\s]|$)/) || [])[1] || null,
+  };
+}
+
+const fw = { label: null, commit: null, images: [], latest: true };
+let releases = [];
+
+async function loadReleases() {
+  try {
+    const r = await fetch('firmware/releases.json', { cache: 'no-cache' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    releases = (await r.json()).filter((rel) => rel.assets.length);
+  } catch (e) {
+    log(`releases.json: ${e.message}`);
+  }
+  const sel = $('release');
+  sel.innerHTML = '';
+  releases.forEach((rel, i) => {
+    const o = document.createElement('option');
+    o.value = rel.tag;
+    o.textContent = `${rel.name || rel.tag}${i === 0 ? '  (latest)' : ''}`;
+    sel.append(o);
+  });
+  if (!releases.length) {
+    sel.innerHTML = '<option>No release on this site</option>';
+    sel.disabled = true;
+    $('fwInfo').innerHTML = 'The releases could not be loaded. Download a <code>.bin</code> from the ' +
+      '<a href="https://github.com/mitmedialab/LibRing/releases/latest" target="_blank" rel="noopener">releases page</a>, then <b>Open a .bin file</b>.';
+  } else {
+    await selectRelease(releases[0].tag);
+  }
+  checkNewerOnGitHub();
+}
+
+// The site copies the releases when it is deployed: tell if GitHub has a newer one
+async function checkNewerOnGitHub() {
+  try {
+    const r = await fetch('https://api.github.com/repos/mitmedialab/LibRing/releases/latest');
+    if (!r.ok) return;
+    const latest = await r.json();
+    if (releases.some((rel) => rel.tag === latest.tag_name)) return;
+    $('ghBanner').innerHTML = `<div class="banner amber">GitHub has a newer release, <b>${esc(latest.name || latest.tag_name)}</b>,
+      not on this site yet: download its <code>.bin</code> from
+      <a href="${esc(latest.html_url)}" target="_blank" rel="noopener">GitHub</a>, then <b>Open a .bin file</b>.</div>`;
+  } catch (e) { /* offline: fine */ }
+}
+
+async function selectRelease(tag) {
+  const rel = releases.find((r) => r.tag === tag);
+  if (!rel) return;
+  $('fwInfo').textContent = `Loading ${rel.name || rel.tag}…`;
+  try {
+    const images = await Promise.all(rel.assets.map(async (a) => {
+      const r = await fetch(`firmware/${encodeURIComponent(rel.tag)}/${encodeURIComponent(a.name)}`);
+      if (!r.ok) throw new Error(`${a.name}: HTTP ${r.status}`);
+      return parseImage(await r.arrayBuffer(), a.name);
+    }));
+    const commit = (rel.name || '').match(/\b([0-9a-f]{7})\b/)?.[1] || images[0]?.commit || null;
+    setFirmware({ label: rel.name || rel.tag, commit, images, latest: rel === releases[0],
+      date: rel.published_at, notes: rel.body, url: rel.html_url });
+  } catch (e) {
+    setFirmware(null);
+    $('fwInfo').innerHTML = `<span class="pill warn">Error</span> ${esc(e.message)}`;
+    log(`firmware: ${e.message}`);
+  }
+}
+
+function setFirmware(f) {
+  Object.assign(fw, { label: null, commit: null, images: [], latest: true, date: null, notes: null, url: null }, f || {});
+  const info = $('fwInfo'), imgs = $('images');
+  imgs.innerHTML = '';
+  if (!f) { updateButtons(); return; }
+  const date = fw.date ? new Date(fw.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+  info.innerHTML = `<b>${esc(fw.label)}</b>` +
+    (fw.commit && !fw.label.includes(fw.commit) ? ` · commit <code>${esc(fw.commit)}</code>` : '') +
+    (date ? ` · ${date}` : '') +
+    (fw.url ? ` · <a href="${esc(fw.url)}" target="_blank" rel="noopener">GitHub</a>` : '') + ' ' +
+    (fw.latest ? '<span class="pill ok">latest</span>' : fw.file ? '<span class="pill info">your file</span>'
+      : '<span class="pill amber">older version</span>');
+  for (const img of [...fw.images].sort((a, b) => (b.pid === PREFERRED_PID) - (a.pid === PREFERRED_PID))) {
+    const d = document.createElement('div');
+    d.className = 'image';
+    d.innerHTML = `<span class="pill ok">✓ checked</span> <b>0x${hex2(img.pid)}</b> ${esc(PRODUCTS[img.pid] || 'unknown model')}
+      <span class="muted">· ${(img.bytes.length / 1024).toFixed(1)} KB</span>`;
+    d.title = `${img.fileName}\nbuilt ${img.built.toLocaleString()}`;
+    imgs.append(d);
+  }
+  const notes = $('notes');
+  notes.hidden = !fw.notes;
+  $('notesBody').textContent = fw.notes || '';
+  if (!fw.latest && !fw.file) {
+    $('fwBanner').innerHTML = '<div class="banner amber">Not the latest version: only to go back to an older firmware.</div>';
+  } else if (fw.file) {
+    $('fwBanner').innerHTML = '<div class="banner amber">Your own file: only flash a firmware you know works (a bad build can lock a ring out of Bluetooth).</div>';
+  } else {
+    $('fwBanner').innerHTML = '';
+  }
+  log(`firmware: ${fw.label} (${fw.images.map((i) => `0x${hex2(i.pid)}`).join(', ')})`);
+  renderAll();
+}
+
+$('release').onchange = (e) => selectRelease(e.target.value);
+$('openFile').onclick = () => $('file').click();
+$('file').onchange = (e) => { if (e.target.files[0]) openFile(e.target.files[0]); e.target.value = ''; };
+async function openFile(file) {
+  try {
+    const img = parseImage(await file.arrayBuffer(), file.name);
+    setFirmware({ label: file.name, commit: img.commit, images: [img], latest: false, file: true,
+      date: img.built.toISOString() });
+  } catch (e) {
+    $('fwBanner').innerHTML = `<div class="banner warn">${esc(e.message)}</div>`;
+  }
+}
+// drag and drop a .bin anywhere
+let dragDepth = 0;
+addEventListener('dragenter', (e) => { if (e.dataTransfer?.types.includes('Files')) { dragDepth++; document.body.classList.add('dragging'); } });
+addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => {
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+  const f = e.dataTransfer?.files?.[0];
+  if (f && !busy) openFile(f);
+});
+
+// Image for a ring: our firmware takes any of them; a stock ring only its model's
+function imagesFor(ring) {
+  const imgs = [...fw.images].sort((a, b) => (b.pid === PREFERRED_PID) - (a.pid === PREFERRED_PID));
+  if (ring.kind === 'stock') return imgs; // tried in order: the ring refuses the wrong model at once
+  return imgs.slice(0, 1);
+}
+
+// ---- rings -------------------------------------------------------------------------
+
+const rings = new Map(); // device.id -> ring
+let busy = false, stopRequested = false;
+
+function ringKindFromName(name) {
+  if (!name) return null;
+  if (/^(LibRing|TEST)/i.test(name)) return 'libring';
+  return 'stock';
+}
+
+function addRing(device, addedHere) {
+  let ring = rings.get(device.id);
+  if (!ring) {
+    ring = { device, id: device.id, name: device.name || 'unnamed ring', kind: ringKindFromName(device.name),
+      selected: true, state: 'idle', progress: 0, status: '', adv: {}, addedHere };
+    rings.set(device.id, ring);
+    ring.el = buildRow(ring);
+    const list = $('rings');
+    list.querySelector('.empty')?.remove();
+    list.append(ring.el);
+    device.addEventListener('advertisementreceived', (e) => onAdvert(ring, e));
+    log(`${ring.name}: added`);
+  } else if (addedHere) {
+    ring.addedHere = true;
+  }
+  render(ring);
+  updateButtons();
+  return ring;
+}
+
+function buildRow(ring) {
+  const el = document.createElement('div');
+  el.className = 'ring';
+  el.innerHTML = `
+    <input type="checkbox" checked aria-label="Select">
+    <div><div class="name"></div><div class="meta"></div></div>
+    <div class="status"></div>
+    <div class="acts"><button class="flash">Update</button><button class="icon remove" title="Remove from the list">✕</button></div>
+    <div class="bar"><div></div></div>`;
+  el.querySelector('input').onchange = (e) => { ring.selected = e.target.checked; updateButtons(); };
+  el.querySelector('.flash').onclick = () => flashRings([ring]);
+  el.querySelector('.remove').onclick = async () => {
+    rings.delete(ring.id);
+    el.remove();
+    try { await ring.device.forget?.(); } catch (e) { /* not supported */ }
+    if (!rings.size) $('rings').innerHTML = '<div class="empty">No ring. Press <b>+ Add rings</b>.</div>';
+    updateButtons();
+  };
+  return el;
+}
+
+function versionPill(ring) {
+  const v = ring.adv.version;
+  if (ring.kind === 'stock' && !v) return '<span class="pill plain">stock firmware</span>';
+  if (!v) return '<span class="pill plain" title="The commit is only in the advertisements, which this browser doesn\'t pass to the page (Android Chrome, Chrome on Linux). Known after an update.">version ?</span>';
+  if (v === 'unknown') return '<span class="pill plain">custom build</span>';
+  const clean = v.replace('+', '');
+  if (fw.commit && clean === fw.commit && !v.endsWith('+')) return `<span class="pill ok">${esc(v)} · up to date</span>`;
+  return `<span class="pill amber">${esc(v)}${fw.commit ? ' · update available' : ''}</span>`;
+}
+
+// One "LABEL value" field of the line under the ring's name
+function field(label, value, tip) {
+  const known = value != null && value !== '';
+  return `<span title="${esc(tip || '')}"><span class="k">${label}</span><span class="v${known ? '' : ' unknown'}">${known ? esc(value) : '?'}</span></span>`;
+}
+
+// Web Bluetooth never gives the address. LibRing_XX: XX is its last byte.
+function addressText(ring) {
+  const m = /^LibRing_([0-9A-F]{2})$/i.exec(ring.name);
+  return m ? `…:${m[1].toUpperCase()}` : null;
+}
+
+function render(ring) {
+  const el = ring.el;
+  el.className = `ring ${ring.state}`;
+  el.querySelector('.name').textContent = ring.name;
+  const age = ring.adv.at ? ` (${new Date(ring.adv.at).toLocaleTimeString()})` : '';
+  el.querySelector('.meta').innerHTML = [
+    field('Address', addressText(ring), 'Browsers hide Bluetooth addresses: the last byte is the one in the ring\'s name (LibRing_XX). The full address: "make scan".'),
+    field('RSSI', ring.adv.rssi != null ? `${ring.adv.rssi} dBm` : null, `Signal strength: closer is higher (−40 near, −80 far)${age}`),
+    field('Battery', ring.adv.battery, `Estimated by the ring (it learns its range while charging)${age}`),
+    `<span><span class="k">Firmware</span>${versionPill(ring)}</span>`,
+  ].join('');
+  const st = el.querySelector('.status');
+  st.innerHTML = ring.status || '<span class="muted">ready</span>';
+  el.querySelector('.bar > div').style.width = `${Math.round(ring.progress * 100)}%`;
+  el.querySelector('input').checked = ring.selected;
+  el.querySelector('input').disabled = busy;
+  el.querySelector('.flash').disabled = busy || !fw.images.length;
+  el.querySelector('.remove').disabled = busy;
+}
+function renderAll() { for (const r of rings.values()) render(r); updateButtons(); }
+
+function setStatus(ring, html, state) {
+  ring.status = html;
+  if (state) ring.state = state;
+  render(ring);
+}
+
+function updateButtons() {
+  const sel = [...rings.values()].filter((r) => r.selected).length;
+  const ready = fw.images.length && !busy;
+  $('flashSel').disabled = !ready || !sel;
+  $('flashSel').textContent = `Update selected (${sel})`;
+  $('flashAll').disabled = !ready || !rings.size;
+  $('flashAll').textContent = `Update all (${rings.size})`;
+  $('add').disabled = busy || !bt;
+  $('refresh').disabled = busy || !bt || !rings.size || !!refreshing;
+  $('stop').hidden = !busy;
+  if (!busy) { $('stop').disabled = false; $('stop').textContent = 'Stop after this ring'; }
+  $('release').disabled = busy || !releases.length;
+  $('openFile').disabled = busy;
+}
+
+// Our firmware's manufacturer data: commit (4 bytes BE), flags, battery reading - 200, %
+function onAdvert(ring, e) {
+  ring.adv.rssi = e.rssi ?? ring.adv.rssi;
+  ring.adv.at = Date.now();
+  const d = e.manufacturerData?.get(VERSION_COMPANY_ID);
+  if (d && [5, 6, 7].includes(d.byteLength)) {
+    const flags = d.getUint8(4);
+    ring.kind = 'libring';
+    ring.adv.version = flags & 0x02 ? 'unknown'
+      : [0, 1, 2, 3].map((i) => hex2(d.getUint8(i))).join('').toLowerCase().slice(0, 7) + (flags & 0x01 ? '+' : '');
+    if (d.byteLength === 7 && d.getUint8(5)) {
+      const learned = ((flags >> 3) & 3) === 3;
+      ring.adv.battery = `${flags & 0x04 ? 'charging ' : ''}${d.getUint8(6)} %${learned ? '' : ' (estimate)'}`;
+    }
+  }
+  if (e.name && e.name !== ring.name) ring.name = e.name;
+  if (!busy) render(ring);
+}
+
+// Listen to the rings' advertisements for a few seconds (not while updating: scanning
+// disturbs the connections). Chrome on Linux gets none, but it makes BlueZ find the rings again.
+let refreshing = null;
+async function refreshInfo(list = [...rings.values()], ms = 4000) {
+  if (busy) return;
+  if (refreshing) await refreshing; // one refresh at a time
+  if (busy) return;
+  refreshing = (async () => {
+    $('refresh').textContent = 'Reading…';
+    $('refresh').disabled = true;
+    if (BluetoothDevice.prototype.watchAdvertisements) {
+      await Promise.all(list.map((r) => r.device.watchAdvertisements().catch(() => {})));
+      await sleep(ms);
+      for (const r of list) try { r.device.unwatchAdvertisements(); } catch (e) { /* gone */ }
+    }
+    for (const r of list) { // then connected, one at a time
+      if (busy || !rings.has(r.id)) break;
+      if (r.adv.at && Date.now() - r.adv.at < 5000 && r.adv.battery && r.adv.rssi != null) continue; // just heard
+      await readInfo(r);
+    }
+    $('refresh').textContent = 'Refresh info';
+  })();
+  await refreshing;
+  refreshing = null;
+  updateButtons();
+}
+$('refresh').onclick = () => refreshInfo();
+
+// Battery and link RSSI over a short connection (LibRing firmware): every browser.
+// The RSSI comes with the accelerometer data, which runs while its notifications are on.
+async function readInfoFrom(server, ring) {
+  let svc;
+  try { svc = await server.getPrimaryService(LIBRING_SERVICE); }
+  catch (e) { if (e.name === 'NotFoundError') ring.kind = 'stock'; return; }
+  ring.kind = 'libring';
+  try {
+    const v = await (await svc.getCharacteristic(BATT)).readValue();
+    if (v.byteLength >= 8 && v.getUint8(3) === 0x02) {
+      const learned = (v.getUint8(7) & 3) === 3;
+      ring.adv.battery = `${v.getUint8(2) ? 'charging ' : ''}${v.getUint8(4)} %${learned ? '' : ' (estimate)'}`;
+    }
+  } catch (e) { /* older firmware */ }
+  try {
+    const accel = await svc.getCharacteristic(ACCEL);
+    await accel.startNotifications();
+    for (let i = 0; i < 12; i++) {
+      await sleep(250);
+      const v = await accel.readValue();
+      const rssi = v.byteLength >= 8 ? v.getInt8(7) : 127;
+      if (rssi !== 127 && rssi > -110) { ring.adv.rssi = rssi; break; }
+    }
+    await accel.stopNotifications().catch(() => {});
+  } catch (e) { /* older firmware */ }
+  ring.adv.at = Date.now();
+}
+async function readInfo(ring) {
+  const old = ring.status;
+  setStatus(ring, '<span class="muted">reading the info…</span>');
+  try {
+    const server = await gattConnect(ring.device);
+    await readInfoFrom(server, ring);
+    setStatus(ring, old);
+  } catch (e) {
+    log(`${ring.name}: info: ${e.message}`);
+    setStatus(ring, `<span class="muted">not reachable (${esc(e.message)})</span>`);
+  } finally {
+    try { ring.device.gatt.disconnect(); } catch (e) { /* gone */ }
+  }
+}
+
+// The chooser picks one ring: it opens again after each pick (without the LibRing rings
+// already added) until cancelled
+$('add').onclick = async () => {
+  const added = [];
+  for (;;) {
+    const exclude = [...rings.values()].filter((r) => r.addedHere && /^LibRing_/.test(r.name)).map((r) => ({ name: r.name }));
+    let device;
+    try {
+      device = await bt.requestDevice({
+        filters: [{ services: [SUOTA_SERVICE] }, { namePrefix: 'LibRing' }, { namePrefix: 'SR08' }],
+        optionalServices: [SUOTA_SERVICE, LIBRING_SERVICE],
+        optionalManufacturerData: [VERSION_COMPANY_ID],
+        ...(exclude.length ? { exclusionFilters: exclude } : {}),
+      });
+    } catch (e) {
+      if (e.name === 'SecurityError') log('the browser wants a new click for the next ring'); // Android
+      else if (e.name !== 'NotFoundError') log(`Add rings: ${e.message}`); // NotFoundError: cancelled
+      break;
+    }
+    added.push(addRing(device, true));
+    $('add').textContent = '+ Add another ring';
+  }
+  if (added.length) refreshInfo(added);
+};
+
+// ---- SUOTA -------------------------------------------------------------------------
+
+// gatt.connect(). Linux: BlueZ forgets the rings ~30 s after its last scan, then Chrome
+// refuses at once ("no longer in range"): watching the advertisements makes it scan again.
+async function gattConnect(device) {
+  try {
+    return await device.gatt.connect();
+  } catch (e) {
+    if (!/no longer in range/i.test(e.message) || !device.watchAdvertisements) throw e;
+    try { await device.watchAdvertisements(); } catch (e2) { /* not supported */ }
+    await sleep(3000);
+    try { device.unwatchAdvertisements(); } catch (e2) { /* not watching */ }
+    return device.gatt.connect();
+  }
+}
+
+const u32 = (v) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; };
+const u16 = (v) => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return b; };
+
+// One upload attempt. progress(fraction, text). Returns 'ok'.
+async function suotaUpload(ring, image, opts, progress) {
+  const device = ring.device;
+  const server = await gattConnect(device);
+  const connectedAt = performance.now();
+
+  // Our firmware or stock? (decides the write sizes, and whether a CRC error is ignored)
+  try {
+    await server.getPrimaryService(LIBRING_SERVICE);
+    ring.kind = 'libring';
+  } catch (e) {
+    if (e.name === 'NotFoundError') ring.kind = 'stock';
+  }
+  const stock = ring.kind === 'stock';
+
+  let svc;
+  try {
+    svc = await server.getPrimaryService(SUOTA_SERVICE);
+  } catch (e) {
+    if (e.name === 'SecurityError') {
+      throw new SuotaError('this page may not update this ring yet: "+ Add rings" and pick it again');
+    }
+    throw e;
+  }
+  const ch = {};
+  for (const c of await svc.getCharacteristics()) {
+    const key = Object.keys(CHARS).find((k) => CHARS[k] === c.uuid);
+    if (key) ch[key] = c;
+  }
+  for (const k of ['memDev', 'gpioMap', 'patchLen', 'patchData', 'status']) {
+    if (!ch[k]) throw new SuotaError(`no SUOTA ${k} characteristic: not a LibRing-compatible ring?`);
+  }
+
+  // Status: notifications, or (Chrome on Linux after the first connection of the page)
+  // reading the status and the received byte count after each block
+  const queue = [];
+  let wake = null;
+  const push = (v) => { queue.push(v); if (wake) { wake(); wake = null; } };
+  const onNotify = (e) => push(e.target.value.getUint8(0));
+  const onDisconnect = () => push(null);
+  ch.status.addEventListener('characteristicvaluechanged', onNotify);
+  device.addEventListener('gattserverdisconnected', onDisconnect);
+  let polling = false;
+  try { await ch.status.startNotifications(); } catch (e) { polling = true; }
+
+  const disconnectedError = (step) =>
+    new Error(`${step}: ring disconnected ${((performance.now() - connectedAt) / 1000).toFixed(1)} s after connecting`);
+  const nextStatus = async (timeout) => {
+    const end = performance.now() + timeout;
+    while (!queue.length) {
+      const left = end - performance.now();
+      if (left <= 0) return undefined;
+      await new Promise((r) => { wake = r; setTimeout(r, left); });
+    }
+    return queue.shift();
+  };
+  const expect = async (wanted, step, timeout = 10000) => {
+    let st;
+    do {
+      st = await nextStatus(timeout);
+      if (st === undefined) throw new Error(`${step}: no answer from the ring`);
+      if (st === null) throw disconnectedError(step);
+    } while (st === ST.STARTED);
+    if (st !== wanted) throw new SuotaError(`${step}: ${STATUS[st] || `status 0x${hex2(st)}`}`, { cause: st });
+  };
+  const readStatus = async () => (await ch.status.readValue()).getUint8(0);
+  const isError = (st) => ![ST.STARTED, ST.OK, ST.IMG_STARTED].includes(st);
+
+  try {
+    // Write sizes: one write must fit in one packet (MTU - 3 bytes). Our firmware tells its
+    // MTU and buffer size; 240-byte writes and 480-byte blocks there (~5x faster than
+    // 20 / 240). Stock rings: 20 / 240, like the Android SUOTA app.
+    let chunk = 20, blockSize = 240;
+    if (!stock && !opts.small && ch.mtu) {
+      try {
+        const mtu = (await ch.mtu.readValue()).getUint16(0, true);
+        let pd = 240;
+        if (ch.pdSize) try { pd = (await ch.pdSize.readValue()).getUint16(0, true) || 240; } catch (e) { /* default */ }
+        chunk = Math.max(20, Math.min(240, pd, mtu - 3));
+        blockSize = chunk >= 120 ? chunk * 2 : 240;
+      } catch (e) { /* keep 20 / 240 */ }
+    }
+    log(`${ring.name}: ${stock ? 'stock firmware' : 'LibRing firmware'}, image 0x${hex2(image.pid)}, ` +
+      `${chunk}-byte writes, ${blockSize}-byte blocks${polling ? ', status read (no notifications)' : ''}`);
+
+    // Start: SPI flash, bank 0 (the ring picks the oldest image's bank)
+    await ch.memDev.writeValueWithResponse(u32((MEM_SPI_FLASH << 24) | 0));
+    if (!polling) {
+      try { await expect(ST.IMG_STARTED, 'start', 2000); }
+      catch (e) {
+        if (e instanceof SuotaError || !/no answer/.test(e.message)) throw e;
+        polling = true; // Chrome on Linux: no notifications after the page's first connection
+        log(`${ring.name}: no notifications, reading the status instead`);
+      }
+    }
+    if (polling) {
+      const st = await readStatus();
+      if (st !== ST.IMG_STARTED) throw new SuotaError(`start: ${STATUS[st] || `status 0x${hex2(st)}`}`, { cause: st });
+    }
+    await ch.gpioMap.writeValueWithResponse(u32(GPIO_MAP_SR08));
+
+    const data = image.bytes;
+    const imageLen = image.allSize + 64; // the ring stores this much (not the XOR byte)
+    const write = ch.patchData.writeValueWithoutResponse ? (v) => ch.patchData.writeValueWithoutResponse(v)
+      : (v) => ch.patchData.writeValue(v);
+    let patchLen = null;
+    const start = performance.now();
+    for (let offset = 0; offset < data.length; offset += blockSize) {
+      if (!device.gatt.connected) throw disconnectedError(`block at 0x${offset.toString(16)}`);
+      const block = data.subarray(offset, offset + blockSize);
+      if (block.length !== patchLen) {
+        patchLen = block.length;
+        await ch.patchLen.writeValueWithResponse(u16(patchLen));
+      }
+      for (let i = 0; i < block.length; i += chunk) {
+        try { await write(block.slice(i, i + chunk)); }
+        catch (e) {
+          if (chunk > 20 && device.gatt.connected) throw new SmallWritesError(`${chunk}-byte writes refused: ${e.message}`);
+          throw e;
+        }
+      }
+      const done = offset + block.length;
+      const step = `block at 0x${offset.toString(16)}`;
+      const timeout = offset === 0 ? 30000 : 10000; // the first block also erases the flash
+      if (!polling) {
+        await expect(ST.OK, step, timeout);
+      } else {
+        const want = Math.min(done, imageLen);
+        const end = performance.now() + timeout;
+        for (;;) {
+          if (!device.gatt.connected) throw disconnectedError(step);
+          const st = await readStatus();
+          if (isError(st)) throw new SuotaError(`${step}: ${STATUS[st] || `status 0x${hex2(st)}`}`, { cause: st });
+          if (ch.memInfo) {
+            if ((await ch.memInfo.readValue()).getUint32(0, true) >= want) break;
+          } else if (st === ST.OK) {
+            await sleep(30);
+            break;
+          }
+          if (performance.now() > end) throw new Error(`${step}: no answer from the ring`);
+          await sleep(15);
+        }
+      }
+      const secs = (performance.now() - start) / 1000;
+      const rate = done / 1024 / Math.max(secs, 0.01);
+      progress(done / data.length, `${Math.round(done * 100 / data.length)} % · ${rate.toFixed(1)} KB/s · ` +
+        `${Math.max(0, Math.round((data.length - done) / 1024 / rate))} s left`);
+    }
+    log(`${ring.name}: ${data.length} bytes in ${((performance.now() - start) / 1000).toFixed(1)} s`);
+
+    // End: the ring checks the image (CRC), then reboots into it
+    progress(1, 'checking the image…');
+    await ch.memDev.writeValueWithResponse(u32(CMD_IMG_END << 24));
+    try {
+      if (!polling) await expect(ST.OK, 'image check');
+      else {
+        const st = await readStatus();
+        if (st !== ST.OK) throw new SuotaError(`image check: ${STATUS[st] || `status 0x${hex2(st)}`}`, { cause: st });
+      }
+    } catch (e) {
+      // The stock receiver reports a CRC error although the image boots fine (the Android
+      // app offers to skip it). Never ignored on our firmware.
+      if (!(stock && e instanceof SuotaError && e.cause === ST.CRC)) throw e;
+      log(`${ring.name}: ${e.message}: ignored on stock firmware, like "skip" in the SUOTA app`);
+    }
+    try { await ch.memDev.writeValueWithResponse(u32(CMD_REBOOT << 24)); } catch (e) { /* it reboots */ }
+    return 'ok';
+  } finally {
+    ch.status.removeEventListener('characteristicvaluechanged', onNotify);
+    device.removeEventListener('gattserverdisconnected', onDisconnect);
+    await sleep(300);
+    try { device.gatt.disconnect(); } catch (e) { /* gone */ }
+  }
+}
+
+// After the update: the ring reboots (~2 s), then must answer with LibRing firmware
+async function verify(ring) {
+  await sleep(4000);
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const server = await gattConnect(ring.device);
+      await server.getPrimaryService(LIBRING_SERVICE); // throws if not our firmware
+      await readInfoFrom(server, ring);
+      try { ring.device.gatt.disconnect(); } catch (e) { /* gone */ }
+      return { ok: true };
+    } catch (e) {
+      try { ring.device.gatt.disconnect(); } catch (e2) { /* gone */ }
+      await sleep(2000 * attempt);
+    }
+  }
+  return { ok: false };
+}
+
+async function flashOne(ring) {
+  const tried = new Set();
+  let small = false;
+  setStatus(ring, 'connecting…', 'flashing');
+  ring.progress = 0;
+  // (the list changes once the ring turns out to be stock: then every model is tried)
+  for (let image; (image = imagesFor(ring).find((img) => !tried.has(img)));) {
+    tried.add(image);
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        if (attempt > 1) setStatus(ring, `connecting… (attempt ${attempt})`);
+        await suotaUpload(ring, image, { small }, (f, text) => { ring.progress = f; setStatus(ring, text); });
+        const wasStock = ring.kind === 'stock';
+        setStatus(ring, 'rebooting, checking…');
+        if (wasStock) {
+          // its factory address becomes one derived from its flash chip: another device
+          setStatus(ring, '<span class="pill ok">✓ updated</span> It reboots with a new name <b>LibRing_XX</b>: add it again.', 'done');
+          ring.adv = {};
+          return true;
+        }
+        const v = await verify(ring);
+        ring.adv.version = v.ok && fw.commit && !fw.file ? fw.commit : undefined;
+        setStatus(ring, v.ok ? '<span class="pill ok">✓ updated</span> and running' :
+          '<span class="pill ok">✓ updated</span> <span class="muted">(not seen after the reboot yet: give it a few seconds)</span>', 'done');
+        log(`${ring.name}: updated${v.ok ? ', reconnected after the reboot' : ', not reconnected after the reboot'}`);
+        return true;
+      } catch (e) {
+        log(`${ring.name}: ${e.message}`);
+        if (e instanceof SmallWritesError) { small = true; attempt--; continue; }
+        if (e instanceof SuotaError) {
+          // a stock ring of the other model: try the next image
+          const next = imagesFor(ring).find((img) => !tried.has(img));
+          if (e.cause === ST.BAD_HEADER && ring.kind === 'stock' && next) {
+            log(`${ring.name}: not a 0x${hex2(image.pid)} ring, trying the 0x${hex2(next.pid)} image`);
+            setStatus(ring, `not a 0x${hex2(image.pid)} ring, trying the 0x${hex2(next.pid)} image…`);
+            break;
+          }
+          setStatus(ring, `<span class="pill warn">failed</span> ${esc(e.message)}`, 'failed');
+          return false;
+        }
+        if (attempt === 5) {
+          setStatus(ring, `<span class="pill warn">failed</span> ${esc(e.message)}. Bring it closer and try again.`, 'failed');
+          return false;
+        }
+        setStatus(ring, `connection problem, retrying… <span class="muted">(${esc(e.message)})</span>`);
+        await sleep(2000);
+      }
+    }
+  }
+  setStatus(ring, '<span class="pill warn">failed</span> no image for this ring model', 'failed');
+  return false;
+}
+
+let wakeLock = null;
+async function flashRings(list) {
+  if (busy || !list.length || !fw.images.length) return;
+  busy = true; stopRequested = false;
+  // right after a page load, Chrome may still be closing the previous page's links
+  await sleep(Math.max(0, 2000 - performance.now()));
+  if (refreshing) await refreshing;
+  for (const r of rings.values()) try { r.device.unwatchAdvertisements?.(); } catch (e) { /* not watching */ }
+  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) { /* not allowed */ }
+  for (const r of list) { r.progress = 0; setStatus(r, 'waiting…', 'queued'); }
+  updateButtons();
+  let ok = 0, n = 0;
+  log(`updating ${list.length} ring(s) with ${fw.label}`);
+  for (const r of list) {
+    if (stopRequested) { setStatus(r, '<span class="muted">skipped (stopped)</span>', 'idle'); continue; }
+    n++;
+    $('overall').textContent = `Ring ${n} of ${list.length}…`;
+    if (await flashOne(r)) ok++;
+  }
+  const failed = n - ok;
+  $('overall').innerHTML = `Done: <b>${ok}</b> updated` + (failed ? `, <span style="color: var(--warn)"><b>${failed}</b> failed</span>` : '') +
+    (n < list.length ? `, ${list.length - n} skipped` : '');
+  log(`done: ${ok} updated, ${failed} failed`);
+  try { await wakeLock?.release(); } catch (e) { /* released */ }
+  busy = false;
+  renderAll();
+}
+$('flashSel').onclick = () => flashRings([...rings.values()].filter((r) => r.selected));
+$('flashAll').onclick = () => flashRings([...rings.values()]);
+$('stop').onclick = () => { stopRequested = true; $('stop').disabled = true; $('stop').textContent = 'Stopping after this ring…'; };
+
+addEventListener('beforeunload', (e) => { if (busy) { e.preventDefault(); e.returnValue = ''; } });
+// Leaving the page: release the rings at once (else the next page can't connect for a while)
+addEventListener('pagehide', () => { for (const r of rings.values()) try { r.device.gatt.disconnect(); } catch (e) { /* gone */ } });
+
+// ---- helpers, start --------------------------------------------------------------------
+
+function hex2(v) { return v.toString(16).toUpperCase().padStart(2, '0'); }
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+
+updateButtons();
+loadReleases();
+// The rings this site was allowed to use before (here or in the other LibRing apps)
+(async () => {
+  if (!bt?.getDevices) return;
+  const devices = await bt.getDevices();
+  for (const d of devices) addRing(d, false);
+  if (devices.length) {
+    log(`rings allowed before: ${devices.map((d) => d.name).join(', ')}`);
+    // after 2 s: right after a reload, Chrome may still be closing the previous page's links
+    setTimeout(() => refreshInfo(), 2000);
+  }
+})();
+if (bt) log(`Web Bluetooth: getDevices ${bt.getDevices ? 'yes' : 'no'}, watchAdvertisements ${
+  'watchAdvertisements' in BluetoothDevice.prototype ? 'yes' : 'no'}`);
+else log('no Web Bluetooth in this browser');
+</script>
+</body>
+</html>
